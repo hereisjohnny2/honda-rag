@@ -8,7 +8,10 @@ from honda_rag import config, llm
 from honda_rag.generation import prompts, validate as V
 from honda_rag.retrieval import expand, hybrid, intent as I, sql_lookup as SQL
 
-MIN_COSINE = 0.55          # abaixo disso (e sem resultado SQL) o sistema recusa
+CHUNK_TYPES = {"spec": ["spec_table", "procedure", "flowchart"],
+               "procedure": ["procedure", "flowchart", "text"],
+               "troubleshooting": ["procedure", "flowchart", "text"],
+               "diagram": ["procedure", "flowchart", "text"]}
 ENGINE_LIKE = re.compile(r"\bD\s?1\d\s?[A-Z]\s?\d\b")
 
 
@@ -52,13 +55,10 @@ def answer(question: str, engine: str | None = config.DEFAULT_ENGINE, trans: str
             extra.append(f"[DIAGNOSTIC CODE] CODE {r['code']} — {r['description']} "
                          f"(procedure: {r['procedure']}, p. {', '.join(r['page_labels'] or [])})")
 
-    types = {"spec": ["spec_table", "procedure", "flowchart"],
-             "procedure": ["procedure", "flowchart", "text"],
-             "troubleshooting": ["procedure", "flowchart", "text"],
-             "diagram": ["procedure", "flowchart", "text"]}.get(intent)
+    types = CHUNK_TYPES.get(intent)
     hits = hybrid.search(queries, question, engine, types=types)
     best_cos = max((h["cos"] for h in hits), default=0.0)
-    if not (sql_rows or extra) and (not hits or best_cos < MIN_COSINE):
+    if not (sql_rows or extra) and (not hits or best_cos < config.MIN_COSINE):
         near = sorted({lab for h in hits[:3] for lab in h["page_labels"] if lab != "?"})
         out.update(refused=True, answer="Não encontrei isso no manual." + (
             f" Páginas mais próximas: {', '.join(near)}." if near else ""))

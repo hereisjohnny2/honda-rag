@@ -26,7 +26,7 @@ def show_page(label: str) -> None:
     if not p:
         st.warning(f"Página {label} não está no banco.")
         return
-    st.image(str(config.ROOT / p["view_path"]), caption=f"Página {p['page_label']} (PDF p. {p['pdf_page']})",
+    st.image(str(config.resolve(p["view_path"])), caption=f"Página {p['page_label']} (PDF p. {p['pdf_page']})",
              use_container_width=True)
 
 
@@ -61,7 +61,7 @@ def render(entry: dict, idx: int) -> None:
             with st.expander(f"Figuras do manual ({len(figs)})", expanded=False):
                 cols = st.columns(2)
                 for i, f in enumerate(figs[:6]):
-                    cols[i % 2].image(str(config.ROOT / f["image_path"]),
+                    cols[i % 2].image(str(config.resolve(f["image_path"])),
                                       caption=f"p. {f['page_label']} · {f['figure_type']}")
         if entry.get("violations"):
             st.warning("O validador removeu linhas com valores que não estão no trecho recuperado.")

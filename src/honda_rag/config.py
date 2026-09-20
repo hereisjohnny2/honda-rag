@@ -11,6 +11,12 @@ ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT / ".env")
 
 
+def resolve(rel: str) -> Path:
+    """Caminho gravado no banco (relativo à raiz do projeto) -> Path absoluto. Aceita barras invertidas:
+    bancos carregados no Windows guardam `data\\pages\\42\\view.webp`, que no Linux seria um nome de arquivo."""
+    return ROOT / rel.replace("\\", "/")
+
+
 def _pages(spec: str) -> list[int]:
     """'1-110,120' -> [1..110, 120]"""
     out: list[int] = []
@@ -47,7 +53,20 @@ _API_PROVIDER = LLM_PROVIDER in ("claude", "gemini")
 CONTEXT_CHARS = int(os.getenv("CONTEXT_CHARS", "24000" if _API_PROVIDER else "9000"))
 CONTEXT_CHUNKS = int(os.getenv("CONTEXT_CHUNKS", "8" if _API_PROVIDER else "5"))
 VLM_MODEL = os.getenv("VLM_MODEL", "qwen2.5vl:7b")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3")
+EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3")                      # modelo do Ollama
+# Embeddings: "ollama" (bge-m3, local) ou "gemini" (API). Os vetores do banco e os da pergunta precisam
+# vir do MESMO modelo: trocar o provedor exige `--stage embed` (recalcula todos os chunks).
+EMBED_PROVIDER = os.getenv("EMBED_PROVIDER", "ollama").strip().lower()
+GEMINI_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
+# Similaridade de cosseno mínima do melhor chunk para responder (senão recusa). Depende do modelo de
+# embedding: 0.55 foi calibrado com o bge-m3. Ao trocar o modelo, recalibre com eval/run_retrieval.py.
+MIN_COSINE = float(os.getenv("MIN_COSINE", "0.55"))
+# Quanto tempo o Ollama mantém o bge-m3 na memória entre perguntas. No servidor, use "24h": recarregar o
+# modelo (~1,2 GB) a cada pergunta custa vários segundos numa CPU pequena.
+EMBED_KEEP_ALIVE = os.getenv("EMBED_KEEP_ALIVE", "10m")
+EMBED_DIM = 1024       # = VECTOR(1024) em db/schema.sql; o gemini-embedding-001 aceita reduzir a dimensão
+# identificador gravado em chunks.embedding_model (o bge-m3 mantém o nome antigo, sem reembutir)
+EMBED_ID = EMBED_MODEL if EMBED_PROVIDER == "ollama" else f"gemini:{GEMINI_EMBED_MODEL}:{EMBED_DIM}"
 
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "").strip() or shutil.which("tesseract") or "tesseract"
 

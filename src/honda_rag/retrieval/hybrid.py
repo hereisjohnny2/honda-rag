@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from psycopg.rows import dict_row
 
-from honda_rag import llm
+from honda_rag import config, llm
 from honda_rag.db import repo
 
 RRF_K = 60
@@ -14,7 +14,14 @@ ENGINE_OK = ("(c.applicability->'engine' IS NULL OR jsonb_array_length(c.applica
 def search(queries_en: list[str], question_pt: str, engine: str | None, k: int = 20,
            types: list[str] | None = None) -> list[dict]:
     """Retorna chunks ordenados por RRF, cada um com 'score', 'cos' (melhor similaridade) e 'ranks'."""
-    vectors = llm.embed(queries_en + [question_pt])
+    with repo.connect() as conn:
+        n = conn.execute("SELECT count(*) FROM chunks WHERE embedding_model = %s", (config.EMBED_ID,)).fetchone()[0]
+    if n == 0:
+        raise RuntimeError(
+            f"Nenhum chunk foi embutido com '{config.EMBED_ID}' (EMBED_PROVIDER={config.EMBED_PROVIDER}). "
+            "Os vetores do banco e os da pergunta precisam ser do mesmo modelo: rode "
+            "`python -m honda_rag.ingest.run --stage embed`.")
+    vectors = llm.embed(queries_en + [question_pt], kind="query")
     flt = ENGINE_OK if engine else "TRUE"
     if types:
         flt += " AND c.chunk_type = ANY(%(types)s)"
@@ -25,9 +32,9 @@ def search(queries_en: list[str], question_pt: str, engine: str | None, k: int =
         for qi, v in enumerate(vectors):
             rows = conn.execute(
                 f"""SELECT c.id, 1 - (c.embedding <=> %(v)s::vector) AS cos
-                      FROM chunks c WHERE c.embedding IS NOT NULL AND {flt}
+                      FROM chunks c WHERE c.embedding IS NOT NULL AND c.embedding_model = %(emb)s AND {flt}
                      ORDER BY c.embedding <=> %(v)s::vector LIMIT %(k)s""",
-                {"v": repo.vec(v), "engine": engine, "k": k, "types": types}).fetchall()
+                {"v": repo.vec(v), "engine": engine, "k": k, "types": types, "emb": config.EMBED_ID}).fetchall()
             for i, r in enumerate(rows):
                 ranks.setdefault(r["id"], {})[f"v{qi}"] = i + 1
                 best_cos[r["id"]] = max(best_cos.get(r["id"], 0), float(r["cos"]))
