@@ -1,6 +1,6 @@
 """Cliente de LLM: Ollama (local), Claude ou Gemini (APIs), escolhido por LLM_PROVIDER no .env.
 
-Embeddings sempre locais (bge-m3 via Ollama), qualquer que seja o provedor de chat.
+Embeddings têm provedor próprio (EMBED_PROVIDER): bge-m3 via Ollama ou gemini-embedding-001.
 """
 from __future__ import annotations
 
@@ -158,9 +158,50 @@ def chat_json(messages: list[dict], **kw) -> dict:
     return extract_json(chat(messages, json_mode=True, **kw))
 
 
-def embed(texts: list[str], cpu: bool = True) -> list[list[float]]:
-    """Embeddings na CPU nas consultas (a GPU fica livre para o que precisar dela)."""
-    payload = {"model": config.EMBED_MODEL, "input": texts, "keep_alive": "10m"}
+def _embed_gemini(texts: list[str], kind: str, batch: int = 50) -> list[list[float]]:
+    """gemini-embedding-001 reduzido a EMBED_DIM (MRL) e normalizado. `kind` escolhe o task_type:
+    documentos e perguntas usam tipos diferentes, o que melhora a busca assimétrica."""
+    import math
+    import time
+
+    from google.genai import errors, types
+
+    cfg = types.EmbedContentConfig(
+        task_type="RETRIEVAL_DOCUMENT" if kind == "document" else "RETRIEVAL_QUERY",
+        output_dimensionality=config.EMBED_DIM)
+    out: list[list[float]] = []
+    for i in range(0, len(texts), batch):
+        part = texts[i:i + batch]
+        for attempt in range(5):
+            try:
+                resp = _gemini().models.embed_content(model=config.GEMINI_EMBED_MODEL, contents=part, config=cfg)
+                break
+            except (errors.ServerError, errors.ClientError) as e:
+                code = getattr(e, "code", None)
+                if code in (401, 403):
+                    raise RuntimeError("GEMINI_API_KEY ausente ou inválida (defina no .env)") from e
+                if attempt == 4 or (isinstance(e, errors.ClientError) and code != 429):
+                    raise
+                time.sleep(2 ** attempt)          # 429/5xx: recua e tenta de novo
+        if len(resp.embeddings) != len(part):
+            raise RuntimeError(f"Gemini devolveu {len(resp.embeddings)} vetores para {len(part)} textos")
+        for e in resp.embeddings:
+            v = list(e.values)
+            n = math.sqrt(sum(x * x for x in v)) or 1.0    # só 3072 dims vem normalizado
+            out.append([x / n for x in v])
+    return out
+
+
+def embed(texts: list[str], kind: str = "query", cpu: bool = True) -> list[list[float]]:
+    """Vetores para busca. kind='query' (pergunta) ou 'document' (chunk, na ingestão)."""
+    if config.EMBED_PROVIDER == "gemini":
+        return _embed_gemini(texts, kind)
+    return _embed_ollama(texts, cpu)
+
+
+def _embed_ollama(texts: list[str], cpu: bool = True) -> list[list[float]]:
+    """Ollama/bge-m3. Na CPU nas consultas (a GPU fica livre para o que precisar dela)."""
+    payload = {"model": config.EMBED_MODEL, "input": texts, "keep_alive": config.EMBED_KEEP_ALIVE}
     if cpu:
         payload["options"] = {"num_gpu": 0}
     r = requests.post(f"{config.OLLAMA_HOST}/api/embed", json=payload, timeout=300)

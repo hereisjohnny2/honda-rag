@@ -18,7 +18,7 @@ from pathlib import Path
 import requests
 from PIL import Image
 
-from honda_rag import config
+from honda_rag import config, llm
 from honda_rag.db import repo
 from honda_rag.ingest import chunk as C
 from honda_rag.ingest import extract as E
@@ -74,7 +74,7 @@ def load(pages: list[int]) -> None:
             """INSERT INTO documents (title, doc_type, model_years, engines, file_path, file_sha256)
                VALUES (%s,'service_manual','[1992,1996)',%s,%s,%s) RETURNING id""",
             ("Honda Civic 1992-1995 Service Manual", config.ENGINES,
-             str(config.PDF_PATH.relative_to(config.ROOT)), sha)).fetchone()[0]
+             config.PDF_PATH.relative_to(config.ROOT).as_posix(), sha)).fetchone()[0]
 
         # ---- seções, sumário, páginas
         sec_ids: dict[int, int] = {}
@@ -105,7 +105,7 @@ def load(pages: list[int]) -> None:
                        ocr_text, ocr_engine, ocr_confidence, layout_json, needs_review)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,'tesseract',%s,%s,%s) RETURNING id""",
                 (doc_id, p, labels.get(p), sec_ids.get(S.section_of(p)),
-                 str((d / "page.png").relative_to(config.ROOT)), str((d / "view.webp").relative_to(config.ROOT)),
+                 (d / "page.png").relative_to(config.ROOT).as_posix(), (d / "view.webp").relative_to(config.ROOT).as_posix(),
                  text, o["mean_conf"], repo.jb(o["layout"]), needs)).fetchone()[0]
             if needs:
                 conn.execute("INSERT INTO review_queue (item_type,item_id,reason,candidates) "
@@ -278,31 +278,28 @@ def _save_figures(conn, pages: list[int], page_ids: dict[int, int], procs) -> in
             path = config.FIGURES_DIR / f"p{p:04d}_{i}.png"
             img.crop(box).save(path)
             conn.execute("INSERT INTO figures (page_id, bbox, image_path, figure_type) VALUES (%s,%s,%s,%s)",
-                         (page_ids[p], list(box), str(path.relative_to(config.ROOT)), ftype))
+                         (page_ids[p], list(box), path.relative_to(config.ROOT).as_posix(), ftype))
             n += 1
     return n
 
 
 # ------------------------------------------------------------------ embeddings
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    r = requests.post(f"{config.OLLAMA_HOST}/api/embed",
-                      json={"model": config.EMBED_MODEL, "input": texts, "keep_alive": "5m"}, timeout=600)
-    r.raise_for_status()
-    return r.json()["embeddings"]
+    return llm.embed(texts, kind="document", cpu=False)   # ingestão: GPU liberada para o Ollama
 
 
 def embed(batch: int = 16) -> None:
     with repo.connect() as conn:
         rows = conn.execute("SELECT id, text FROM chunks WHERE embedding IS NULL OR embedding_model IS DISTINCT "
-                            "FROM %s ORDER BY id", (config.EMBED_MODEL,)).fetchall()
-        print(f"embeddings pendentes: {len(rows)}")
+                            "FROM %s ORDER BY id", (config.EMBED_ID,)).fetchall()
+        print(f"embeddings pendentes: {len(rows)} (modelo: {config.EMBED_ID})")
         t0 = time.time()
         for i in range(0, len(rows), batch):
             part = rows[i:i + batch]
             vecs = embed_texts([t for _, t in part])
             for (cid, _), v in zip(part, vecs):
                 conn.execute("UPDATE chunks SET embedding=%s::vector, embedding_model=%s WHERE id=%s",
-                             (repo.vec(v), config.EMBED_MODEL, cid))
+                             (repo.vec(v), config.EMBED_ID, cid))
             conn.commit()
             print(f"  {min(i + batch, len(rows))}/{len(rows)}  ({time.time() - t0:.0f}s)", flush=True)
 

@@ -1,0 +1,103 @@
+# Produção (VPS sem GPU): Caddy (HTTPS + login) -> app (Streamlit) -> Postgres/pgvector + Ollama (só bge-m3).
+# Uso, na pasta do projeto no servidor (passo a passo em deploy/DEPLOY.md):
+#   docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+#
+# Só o Caddy publica portas (80/443). Postgres e Ollama ficam na rede interna do compose.
+# Limites de memória pensados para 4 GB de RAM (KVM 1): somam ~3,4 GB; crie 2 GB de swap por segurança.
+
+name: honda-rag
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?defina DOMAIN no .env.prod}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/auth.caddy:/etc/caddy/auth.caddy:ro        # gerado por deploy/make_auth.sh (não versionado)
+      - caddy_data:/data                                     # certificados Let's Encrypt
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    mem_limit: 128m
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env.prod
+    environment:
+      PG_HOST: db
+      PG_PORT: "5432"
+      OLLAMA_HOST: http://ollama:11434
+      USE_SYSTEM_CERTS: "0"                # no servidor não há proxy corporativo: usa o certifi
+    volumes:
+      - ./data:/app/data:ro                # view.webp das páginas e recortes de figuras
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    mem_limit: 700m
+
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PG_DB:-honda_rag}
+      POSTGRES_USER: ${PG_USER:-honda}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?defina PG_PASSWORD no .env.prod}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # sem schema.sql: o banco vem do dump (deploy/restore.sh), que já traz o esquema e a extensão vector
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-honda} -d ${PG_DB:-honda_rag}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 512m
+    shm_size: 128mb
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    environment:
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_KEEP_ALIVE: 24h
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    mem_limit: 2g
+
+  # Baixa o bge-m3 na primeira subida (fica no volume `ollama`) e termina.
+  ollama-init:
+    image: ollama/ollama:latest
+    restart: "no"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama", "pull", "bge-m3"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  ollama:
+  caddy_data:
+  caddy_config:

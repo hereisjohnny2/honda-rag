@@ -4,3 +4,10 @@ data/
 __pycache__/
 *.pyc
 .pytest_cache/
+.env.prod
+deploy/auth.caddy
+dist/
+backups/
+honda_rag.dump
+data.tar.gz
+*.egg-info/

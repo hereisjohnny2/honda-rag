@@ -29,8 +29,10 @@ Para recriar o banco do zero: `docker compose down -v; docker compose up -d`.
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -e .
+pip install -e ".[ingest,eval]"
 ```
+
+`[ingest]` traz OCR/imagem (só necessário na máquina que faz a ingestão) e `[eval]` o PyYAML dos avaliadores; o servidor instala só `pip install -e .`.
 
 ### 5. Modelos do Ollama (~12 GB de download)
 ```powershell
@@ -106,3 +108,24 @@ Com `claude`/`gemini`, trechos do manual são enviados à API e o contexto da re
 $env:LLM_PROVIDER="claude"; python eval/run_eval.py
 $env:LLM_PROVIDER="gemini"; python eval/run_eval.py
 ```
+
+### Provedor de embeddings
+`EMBED_PROVIDER` no `.env` escolhe quem gera os vetores. Os vetores do banco e os da pergunta precisam ser do **mesmo modelo**; a busca se recusa a rodar (com mensagem clara) se o banco foi embutido com outro.
+
+| Valor | Modelo | Observação |
+|---|---|---|
+| `ollama` (padrão) | `bge-m3`, local | Precisa do Ollama também em produção |
+| `gemini` | `gemini-embedding-001`, reduzido a 1024 dims | Sem Ollama no servidor; mantém `VECTOR(1024)`; documentos usam `RETRIEVAL_DOCUMENT` e perguntas `RETRIEVAL_QUERY` |
+
+Migrar para o Gemini (rodar de uma rede que alcance a API, por exemplo o próprio servidor; a rede da Fugro bloqueia):
+```powershell
+# 1. ANTES, com o Docker/Ollama locais no ar: fixa as consultas e o baseline do bge-m3
+$env:LLM_PROVIDER="ollama"; python eval/run_retrieval.py --refresh
+# 2. leve o banco e o eval/.intent_cache.json para onde a API funciona; lá, no .env: EMBED_PROVIDER=gemini
+python -m honda_rag.ingest.run --stage embed      # recalcula os 1.638 chunks (33 lotes de 50)
+python eval/run_retrieval.py                      # mesmas consultas: compare hit@5, hit@10, MRR
+```
+O `MIN_COSINE` (limiar de recusa, padrão 0.55) foi calibrado para o bge-m3; o `run_retrieval.py` imprime o cosseno do melhor chunk para perguntas respondíveis e para as que devem ser recusadas, o que permite escolher o novo limiar (`MIN_COSINE` no `.env`).
+
+## Deploy em VPS
+Docker Compose de produção (Caddy com HTTPS e login, app, Postgres/pgvector, Ollama só com bge-m3), pensado para uma VPS de 4 GB sem GPU, com o chat por API. Passo a passo, scripts de exportação/restauração e verificação em [deploy/DEPLOY.md](deploy/DEPLOY.md).

@@ -1,0 +1,16 @@
+# Fora da imagem: dados (montados como volume), segredos, ambiente local e artefatos de ingestão/avaliação
+data/
+dist/
+.env
+.env.*
+.venv/
+.git/
+.claude/
+__pycache__/
+*.pyc
+.pytest_cache/
+eval/
+scripts/
+PLAN.md
+deploy/
+backups/
