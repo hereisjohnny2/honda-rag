@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: honda-rag-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PG_DB:-honda_rag}
+      POSTGRES_USER: ${PG_USER:-honda}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-honda}
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Roda só na primeira subida (volume vazio). Para recriar: docker compose down -v
+      - ./src/honda_rag/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-honda} -d ${PG_DB:-honda_rag}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:

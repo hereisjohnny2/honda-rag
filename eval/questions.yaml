@@ -1,0 +1,103 @@
+# Perguntas de avaliação (PLAN.md §9-10). expected_values: todos devem aparecer literalmente na resposta.
+- id: torque_cabecote
+  question: "Qual o torque dos parafusos do cabeçote do D16Z6?"
+  engine: D16Z6
+  intent: spec
+  expected_pages: ["6-3"]
+  expected_values: ["73 N·m (7.3 kg-m, 53 lb-ft)"]
+- id: folga_valvulas
+  question: "Qual a folga de válvulas de admissão e escape?"
+  engine: D16Z6
+  intent: spec
+  expected_pages: ["3-2"]
+  expected_values: ["0.18-0.22", "0.23-0.27"]
+- id: altura_cabecote
+  question: "Qual a altura do cabeçote do D16Z6 e o limite de empeno?"
+  engine: D16Z6
+  intent: spec
+  expected_pages: ["3-2"]
+  expected_values: ["92.95-93.05", "0.05"]
+- id: selante_liquido
+  question: "Qual o selante líquido indicado na montagem do cabeçote?"
+  engine: D16Z6
+  intent: part_number
+  expected_pages: ["6-3"]
+  expected_values: ["08718-0001"]
+- id: bomba_direcao
+  question: "Como tirar a bomba da direção hidráulica na remoção do motor?"
+  engine: D16Z6
+  intent: procedure
+  expected_pages: ["5-16"]
+  expected_values: []
+  expected_text: ["P/S"]
+- id: codigo_21
+  question: "Código 21 piscando, o que é?"
+  engine: D16Z6
+  intent: dtc
+  expected_pages: ["6-18"]
+  expected_values: []
+  expected_text: ["spool"]
+- id: ferramenta_guia
+  question: "Qual a ferramenta especial para bater (instalar) o guia de válvula de 5.5 mm? Preciso do driver."
+  engine: D16Z6
+  intent: special_tool
+  expected_pages: ["6-2"]
+  expected_values: ["07742-0010100"]
+- id: torque_comp_ar
+  question: "Qual o torque dos parafusos do compressor do ar condicionado na remoção do motor?"
+  engine: D16Z6
+  intent: spec
+  expected_pages: ["5-16"]
+  expected_values: ["22 N·m (2.2 kg-m, 16 lb-ft)"]
+- id: fora_do_motor
+  question: "Qual o torque dos parafusos do cabeçote do D16Y8?"
+  engine: D16Z6
+  expect_refusal: true
+- id: fora_do_manual
+  question: "Qual o preço médio da gasolina no Brasil?"
+  engine: D16Z6
+  expect_refusal: true
+- id: haste_valvula_adm
+  question: "Qual o diâmetro externo da haste da válvula de admissão?"
+  engine: D16Z6
+  intent: spec
+  expected_pages: ["3-2"]
+  expected_values: ["5.48-5.49"]
+- id: guia_altura_d16z6
+  question: "Qual a altura instalada do guia de válvula de admissão do D16Z6?"
+  engine: D16Z6
+  intent: spec
+  expected_pages: ["3-2"]
+  expected_values: ["17.85-18.35"]
+- id: folga_haste_guia_escape
+  question: "Qual a folga entre a haste e o guia da válvula de escape, padrão e limite?"
+  engine: D16Z6
+  intent: spec
+  expected_pages: ["3-2"]
+  expected_values: ["0.05-0.08", "0.12"]
+- id: torque_tampa_valvulas
+  question: "Qual o torque do parafuso de 6 mm da tampa de válvulas?"
+  engine: D16Z6
+  intent: spec
+  expected_pages: ["6-3"]
+  expected_values: ["10 N·m (1.0 kg-m, 7 lb-ft)"]
+- id: cabo_terra
+  question: "Como solto o cabo de terra do motor no cabeçote?"
+  engine: D16Z6
+  intent: procedure
+  expected_pages: ["5-16"]
+  expected_values: []
+  expected_text: ["ground cable"]
+- id: codigo_22
+  question: "O que significa o código 22 da luz de injeção?"
+  engine: D16Z6
+  intent: dtc
+  expected_pages: ["6-20"]
+  expected_values: []
+  expected_text: ["pressão de óleo"]
+- id: motor_d15b8_altura
+  question: "Altura do cabeçote do D15B8?"
+  engine: D15B8
+  intent: spec
+  expected_pages: ["3-2"]
+  expected_values: ["94.95-95.05"]

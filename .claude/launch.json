@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "honda-rag-ui",
+      "runtimeExecutable": ".venv/Scripts/streamlit.exe",
+      "runtimeArgs": ["run", "src/honda_rag/ui/app.py", "--server.headless", "true", "--server.port", "8501", "--browser.gatherUsageStats", "false"],
+      "port": 8501
+    }
+  ]
+}

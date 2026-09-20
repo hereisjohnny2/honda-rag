@@ -1,0 +1,26 @@
+[project]
+name = "honda-rag"
+version = "0.1.0"
+description = "RAG local sobre o manual de serviço Honda Civic 1992-1995"
+requires-python = ">=3.11"
+dependencies = [
+  "psycopg[binary]>=3.1",
+  "pymupdf>=1.24",
+  "python-dotenv>=1.0",
+  "pillow>=10",
+  "numpy>=1.26",
+  "scipy>=1.11",
+  "requests>=2.31",
+  "pyyaml>=6",
+  "streamlit>=1.35",
+  "anthropic>=0.40",
+  "google-genai>=1.0",
+  "truststore>=0.9",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
