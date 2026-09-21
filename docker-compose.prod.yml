@@ -1,4 +1,4 @@
-# Produção (VPS sem GPU): Caddy (HTTPS + login) -> app (Streamlit) -> Postgres/pgvector + Ollama (só bge-m3).
+# Produção (VPS sem GPU): Caddy (HTTPS) -> app (Streamlit) -> Postgres/pgvector + Ollama (só bge-m3).
 # Uso, na pasta do projeto no servidor (passo a passo em deploy/DEPLOY.md):
 #   docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
 # Depois do primeiro deploy, as atualizações vêm do GitHub Actions (.github/workflows/deploy.yml).
@@ -19,7 +19,6 @@ services:
       DOMAIN: ${DOMAIN:?defina DOMAIN no .env.prod}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./deploy/auth.caddy:/etc/caddy/auth.caddy:ro        # gerado por deploy/make_auth.sh (não versionado)
       - caddy_data:/data                                     # certificados Let's Encrypt
       - caddy_config:/config
     depends_on:
