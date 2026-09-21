@@ -326,7 +326,129 @@ Independente do nível, três hábitos valem mais que a cifra:
 
 ---
 
-## 5. Riscos
+## 5. Guardar as conversas no servidor
+
+Hoje o histórico vive em `st.session_state["history"]` (`ui/app.py:45`): memória do processo. Fechou a
+aba, perdeu; recriou o contêiner, perdeu tudo. O lugar natural para guardar é o **Postgres que já está no
+compose** — sem serviço novo, com backup diário já configurado (`deploy/backup.sh`), e o `rag.answer()`
+já devolve num dict tudo o que interessa.
+
+### 5.1 A armadilha: `public` faz a conversa morrer na próxima ingestão
+
+`deploy/export_data.ps1` faz `pg_dump` do banco **inteiro** na sua máquina e `deploy/restore.sh` roda
+`pg_restore --clean --if-exists` no servidor. Uma tabela de conversas em `public` estaria nos dois lados:
+a versão vazia que veio do seu PC **substitui** a do servidor. Ou seja, repetir os passos 5–6 do
+`DEPLOY.md` (rotina de "novos dados") apagaria o histórico, em silêncio.
+
+Correção: esquema separado e uma flag no export.
+
+```powershell
+# deploy/export_data.ps1
+pg_dump -Fc --no-owner --no-privileges --exclude-schema=chat ...
+```
+
+Com isso o `--clean` nunca encosta no `chat`, e o histórico sobrevive a quantas reingestões você fizer.
+
+### 5.2 Esquema
+
+```sql
+CREATE SCHEMA IF NOT EXISTS chat;
+
+CREATE TABLE chat.conversations (
+  id           UUID PRIMARY KEY,
+  started_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  auth_user    TEXT                        -- login do Caddy, se repassado (5.4)
+);
+
+CREATE TABLE chat.turns (
+  id              BIGSERIAL PRIMARY KEY,
+  conversation_id UUID NOT NULL REFERENCES chat.conversations(id) ON DELETE CASCADE,
+  n               INT NOT NULL,            -- ordem dentro da conversa
+  asked_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  question        TEXT NOT NULL,
+  answer          TEXT NOT NULL,
+  refused         BOOLEAN NOT NULL,
+  intent          TEXT,
+  engine          TEXT,                    -- perfil do veículo no momento da pergunta
+  trans           TEXT,
+  provider        TEXT,                    -- 'grok'         ┐ só a partir da fase 3;
+  model           TEXT,                    -- 'grok-4-fast'  ┘ nulos até lá
+  sources         TEXT[],                  -- {'6-3','6-4'}
+  figures         TEXT[],                  -- caminhos das figuras mostradas
+  violations      JSONB,                   -- o que o validador cortou
+  best_cos        REAL,                    -- melhor cosseno (calibrar MIN_COSINE com dado real)
+  seconds         REAL,
+  rating          SMALLINT,                -- 👍 +1 / 👎 -1; nulo = sem voto
+  UNIQUE (conversation_id, n)
+);
+CREATE INDEX turns_asked_idx ON chat.turns (asked_at DESC);
+```
+
+Gravar sai quase de graça: `rag.answer()` já devolve `question`, `answer`, `refused`, `intent`,
+`sources`, `figures` e `violations`; `best_cos` e `seconds` hoje só existem dentro de `out["debug"]`
+(`rag.py:99-100`) e passam a sair sempre.
+
+### 5.3 Onde chamar
+
+Módulo novo `honda_rag/chat_log.py` com `record(conv_id, n, out)`, chamado pelo **`ui/app.py`** logo
+depois do `rag.answer` — **não** de dentro do `rag.answer()`:
+
+- `eval/run_eval.py` chama `rag.answer` 17 vezes a cada rodada e poluiria o histórico;
+- a CLI idem (se quiser gravar, um `--log` explícito).
+
+Gravação sempre em `try/except` com aviso em log: banco cheio ou indisponível **não pode** impedir o
+mecânico de ver a resposta que já está pronta na tela.
+
+### 5.4 Identidade da conversa
+
+`conv_id = uuid4()` guardado no `st.session_state` na primeira pergunta. O `basic_auth` do Caddy é um
+login único e compartilhado, então `auth_user` só ganha sentido se um dia houver mais de um usuário — aí
+dá para repassar com `header_up X-Auth-User {http.auth.user.id}` no `Caddyfile` e ler em
+`st.context.headers` (confirmar na versão do Streamlit instalada; `pyproject.toml` pede só `>=1.35`).
+
+### 5.5 Para que serve — isso decide o resto
+
+| Objetivo | O que precisa |
+|---|---|
+| **a) Continuidade** — reabrir o navegador e achar a conversa de ontem | gravar + **ler de volta** na UI, com lista de conversas no sidebar |
+| **b) Melhorar o sistema** — ver o que perguntam de verdade | só gravar + um export (`COPY ... TO CSV`) |
+
+**(b) é o de maior valor aqui, e o mais barato.** O conjunto de avaliação tem 17 perguntas que, pelo
+próprio README, foram usadas para ajustar o sistema — a taxa alta não prova generalização. Pergunta real
+gravada vira pergunta nova no `eval/questions.yaml`; `refused = true` mostra onde a busca (ou o manual)
+está falhando; e com `provider`/`model` na mesma tabela dá para comparar Gemini × Grok × HF **no uso
+real**, não só no eval.
+
+O **voto 👍/👎** (coluna `rating`) custa dois botões no `render()` e multiplica o valor do log: sem ele
+você sabe o que perguntaram, com ele sabe o que deu errado.
+
+### 5.6 Retenção e privacidade
+
+Volume é irrelevante: ~100 perguntas/dia × ~4 KB ≈ 12 MB/ano. Ainda assim:
+
+- definir retenção (ex.: 180 dias) no mesmo cron do backup:
+  `DELETE FROM chat.turns WHERE asked_at < now() - interval '180 days';`
+- as respostas contêm trechos do manual protegido por direitos autorais, e o backup sai da VPS — vale o
+  mesmo cuidado de acesso que o resto;
+- a pergunta do mecânico pode conter placa, nome de cliente ou dado do carro. Se isso acontecer, a
+  retenção curta é a proteção mais barata.
+
+### 5.7 Alternativa mais simples: JSONL em volume
+
+`data/chat/2026-09.jsonl`, uma linha por turno, sem DDL e sem tocar no banco. Bom para (b), ruim para (a)
+e para qualquer consulta agregada. Precisaria de um volume gravável — hoje `./data` é montado `:ro`
+(`docker-compose.prod.yml:39`), mesma situação do cofre da seção 4. Só recomendo se a ideia for nunca ler
+de volta pela UI.
+
+### 5.8 Fase
+
+Cabe como **fase 6**, depois do seletor: as colunas `provider`/`model` só fazem sentido com a fase 3
+pronta. Mas é independente — dá para fazer antes, deixando as duas colunas nulas.
+
+---
+
+## 6. Riscos
 
 | Risco | Mitigação |
 |---|---|
@@ -337,13 +459,18 @@ Independente do nível, três hábitos valem mais que a cifra:
 | Chave vazando em log ou na tela | UI mostra só estado; chave de sessão nunca persistida; nada de chave em `out["debug"]` |
 | Latência/custo de API por engano | Rodapé com provedor e tempo em cada resposta; `--provider` no eval mede antes de trocar o padrão |
 | Quem usa o chat troca/apaga chave pela UI | O `basic_auth` do Caddy é login único: a tela de chaves pede senha própria (`ADMIN_PASSWORD_HASH`) — seção 4 |
+| Histórico de conversas apagado pela próxima ingestão | Esquema `chat` + `--exclude-schema=chat` no `export_data.ps1`; o `--clean` do `pg_restore` não o alcança (seção 5.1) |
+| Falha ao gravar a conversa derruba a resposta | `record()` em `try/except`: a resposta na tela nunca depende do log |
+| Eval poluindo o histórico | `record()` é chamado pela UI, não por `rag.answer()` |
 | Chave de API em backup do Postgres | Cofre em volume próprio, fora do `pg_dump` do `deploy/backup.sh` |
 | Regressão na refatoração do `llm.py` | Fase 1 é refatoração pura: rodar `run_eval.py` com os 3 provedores atuais antes de seguir |
 
-## 6. Pendências a confirmar com você
+## 7. Pendências a confirmar com você
 
 1. **Chaves disponíveis** — já tem `XAI_API_KEY` e `HF_TOKEN`, ou o plano precisa prever o cadastro?
 2. **Modelo do HF** — algum preferido (Llama 3.3 70B, Qwen, Mistral), ou deixo um padrão e a UI permite trocar?
 3. **Campo de chave na UI** (fase 5, opcional) — útil para testar, mas é chave em tela num PC de oficina. Entra?
-4. **Escopo do seletor** — só o chat, ou também o LLM que classifica a pergunta (`intent.analyze`)?
+4. **Conversas** — o objetivo é (a) continuidade para quem usa, (b) material para melhorar o sistema,
+   ou os dois? E qual retenção (sugestão: 180 dias)?
+5. **Escopo do seletor** — só o chat, ou também o LLM que classifica a pergunta (`intent.analyze`)?
    O plano acima usa **o mesmo** provedor para os dois; separar é possível, mas dobra a configuração.
