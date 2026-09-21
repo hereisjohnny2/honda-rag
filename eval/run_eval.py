@@ -1,6 +1,6 @@
 """Avaliação: recuperação (página esperada nas fontes), exatidão numérica, recusa e violações do validador.
 
-    python eval/run_eval.py [--only id1,id2] [--load]
+    python eval/run_eval.py [--only id1,id2] [--load] [--file questions_gen.yaml]
 """
 from __future__ import annotations
 
@@ -38,9 +38,10 @@ def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
     ap.add_argument("--only")
+    ap.add_argument("--file", default="questions.yaml", help="arquivo de perguntas dentro de eval/")
     ap.add_argument("--load", action="store_true", help="grava as perguntas em eval_questions")
     a = ap.parse_args()
-    qs = yaml.safe_load((ROOT / "eval" / "questions.yaml").read_text(encoding="utf-8"))
+    qs = yaml.safe_load((ROOT / "eval" / a.file).read_text(encoding="utf-8"))
     if a.load:
         load_questions(qs)
     if a.only:
