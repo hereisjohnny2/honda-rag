@@ -8,6 +8,7 @@ recusadas, para calibrar MIN_COSINE.
     python eval/run_retrieval.py                 # usa o cache; gera o que faltar com o LLM configurado
     python eval/run_retrieval.py --refresh       # regera as consultas
     python eval/run_retrieval.py --show          # mostra as páginas dos 3 primeiros chunks
+    python eval/run_retrieval.py --file questions_gen.yaml
 """
 from __future__ import annotations
 
@@ -32,9 +33,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--refresh", action="store_true")
     ap.add_argument("--show", action="store_true")
+    ap.add_argument("--file", default="questions.yaml", help="arquivo de perguntas dentro de eval/")
     a = ap.parse_args()
 
-    qs = yaml.safe_load((ROOT / "eval" / "questions.yaml").read_text(encoding="utf-8"))
+    qs = yaml.safe_load((ROOT / "eval" / a.file).read_text(encoding="utf-8"))
     cache: dict = {} if a.refresh or not CACHE.exists() else json.loads(CACHE.read_text(encoding="utf-8"))
     print(f"embedding: {config.EMBED_ID} | MIN_COSINE={config.MIN_COSINE}\n")
 

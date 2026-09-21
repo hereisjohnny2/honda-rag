@@ -10,8 +10,9 @@ O chat usa uma API (Gemini ou Claude), porque a VPS não tem GPU. A ingestão (O
 ## 0. Antes de começar
 
 - **Troque a chave do Gemini** que foi colada no chat e gere uma nova (Google AI Studio). Defina um limite
-  de gasto/alerta de cobrança na conta da API: o site é aberto, então qualquer pessoa
-  que chegar nele usa o seu crédito.
+  de gasto/alerta de cobrança em CADA conta de API cuja chave for para o `.env.prod` (Gemini, Claude, Grok,
+  Hugging Face): o site é aberto e a UI deixa trocar de provedor, então qualquer pessoa que chegar nele usa
+  o crédito de qualquer um que estiver configurado.
 - Tenha o domínio (ex.: `manual.seudominio.com`) e acesso ao painel de DNS.
 
 ## 1. Criar a VPS
@@ -52,7 +53,9 @@ precisa de chave do GitHub lá.
 ```bash
 cd /opt/honda-rag
 cp .env.prod.example .env.prod && chmod 600 .env.prod
-nano .env.prod          # DOMAIN, PG_PASSWORD (senha longa), LLM_PROVIDER e a chave da API
+nano .env.prod          # DOMAIN, PG_PASSWORD (senha longa), LLM_PROVIDER e a(s) chave(s) de API
+                        # (defina a chave de todo provedor que quiser oferecer na UI: ver o comentário
+                        # da seção "LLM de chat" no arquivo)
 ```
 
 ## 5. Enviar os dados (da sua máquina Windows)
