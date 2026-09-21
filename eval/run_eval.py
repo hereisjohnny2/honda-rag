@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
@@ -18,8 +19,15 @@ from honda_rag import rag  # noqa: E402
 from honda_rag.db import repo  # noqa: E402
 
 
+# Vírgula decimal: o manual escreve "0.18" e o modelo, respondendo em português, pode escrever "0,18".
+# Só troca a vírgula ENTRE dígitos, para não mexer na que separa unidades ("7.3 kg-m, 53 lb-ft").
+DECIMAL_COMMA = re.compile(r"(?<=\d),(?=\d)")
+
+
 def norm(s: str) -> str:
-    return " ".join(s.replace("–", "-").replace("—", "-").split()).lower()
+    """Normalização aplicada aos dois lados da comparação (valor esperado e resposta)."""
+    s = DECIMAL_COMMA.sub(".", s.replace("–", "-").replace("—", "-"))
+    return " ".join(s.split()).lower()
 
 
 def load_questions(qs: list[dict]) -> None:
