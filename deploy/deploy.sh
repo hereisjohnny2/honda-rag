@@ -47,12 +47,20 @@ main() {
   previous="$(docker image inspect -f '{{.Id}}' "$current" 2>/dev/null || true)"
   docker tag "${image}:${sha}" "$current"
   docker rmi -f "${image}:${sha}" >/dev/null    # a imagem continua como :current; só tira a etiqueta
+  local caddy_before
+  caddy_before="$($dc ps -q caddy)"
   $dc up -d --remove-orphans
 
-  # O Caddyfile é montado como arquivo: o compose não percebe mudança nele.
+  # O Caddyfile é montado como arquivo: o compose não percebe mudança nele. Só recarrega se o contêiner do
+  # Caddy é o mesmo de antes; se o compose o recriou (mudou a configuração do serviço), ele já subiu com o
+  # Caddyfile novo, e o reload chegaria antes de a API de admin (:2019) estar no ar.
   if ! git diff --quiet "$old" HEAD -- deploy/Caddyfile; then
-    echo "==> Caddyfile mudou: recarregando o Caddy"
-    $dc exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+    if [ "$($dc ps -q caddy)" = "$caddy_before" ]; then
+      echo "==> Caddyfile mudou: recarregando o Caddy"
+      $dc exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+    else
+      echo "==> Caddyfile mudou: o Caddy foi recriado e já subiu com ele"
+    fi
   fi
 
   wait_healthy "$dc" app 180 || {
