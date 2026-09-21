@@ -119,8 +119,10 @@ Se a pessoa definiu `CONTEXT_CHARS` no `.env`, o valor dela continua mandando (c
 - A UI **nunca mostra a chave** — só o estado: `✅ configurada` / `⚠️ ausente`.
 - Provedor sem chave aparece na lista **desabilitado**, com a dica de qual variável falta (em vez de
   deixar escolher e estourar erro só na hora de responder).
-- Opcional (fase 5): campo `type="password"` para colar uma chave **só na sessão** (`st.session_state`,
-  nunca gravada em disco, nunca logada). Vale para testar um provedor sem reiniciar o servidor.
+- Campo `type="password"` para colar uma chave **só na sessão** (`st.session_state`, nunca gravada em
+  disco, nunca logada) serve para testar um provedor sem reiniciar o servidor.
+- Guardar a chave **na VPS** (em vez de só no `.env.prod`) tem três níveis de esforço e um limite honesto
+  do que a cifra protege: **ver a seção 4**.
 
 ---
 
@@ -209,7 +211,122 @@ Modelo de IA
 
 ---
 
-## 4. Riscos
+## 4. Onde entram as chaves de API
+
+Resposta curta: **hoje, no `.env.prod` do servidor** — é o único lugar de onde o app lê chave
+(`docker-compose.prod.yml:32`, `env_file: .env.prod`). Abaixo, o que já existe, o que dá para melhorar
+barato, e o que custa mais caro (digitar a chave pela própria UI).
+
+### Nível 0 — `.env.prod` (é assim hoje; continua sendo a fonte da verdade)
+
+```bash
+ssh usuario@IP && cd /opt/honda-rag
+nano .env.prod            # GEMINI_API_KEY=...  XAI_API_KEY=...  HF_TOKEN=...
+chmod 600 .env.prod
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d app   # recria só o app
+```
+
+Já está razoável: fora do git (`.gitignore`), `600`, entregue só ao contêiner `app`, nunca exibido na UI.
+
+Limitações honestas:
+
+- trocar uma chave exige SSH e recriar o contêiner;
+- o valor aparece em `docker inspect app` e em `/proc/<pid>/environ` dentro do contêiner — quem já tem
+  root na VPS ou está no grupo `docker` lê de qualquer jeito (esse grupo equivale a root);
+- variável de ambiente é herdada por todo subprocesso e costuma aparecer em dump de crash.
+
+### Nível 1 — Docker secrets (arquivo em vez de variável) — **recomendado**
+
+```yaml
+# docker-compose.prod.yml
+secrets:
+  xai_api_key: { file: ./secrets/xai_api_key }     # chmod 600, dono do usuário, fora do git
+  hf_token:    { file: ./secrets/hf_token }
+services:
+  app:
+    secrets: [xai_api_key, hf_token, gemini_api_key, anthropic_api_key]
+    environment:
+      XAI_API_KEY_FILE: /run/secrets/xai_api_key
+      HF_TOKEN_FILE:    /run/secrets/hf_token
+```
+
+No código, uma função só (~10 linhas), usada no lugar de `os.getenv` para chave:
+
+```python
+# config.py
+def secret(name: str) -> str:
+    """Convenção *_FILE (Docker secret) tem prioridade; senão a variável de ambiente."""
+```
+
+Ganho: a chave sai de `docker inspect`, de `/proc/environ` e dos subprocessos; `/run/secrets` é `tmpfs`.
+Custo: um arquivo por chave e quatro linhas no compose. Cabe na **fase 5** do plano, sem tocar na UI.
+
+### Nível 2 — digitar a chave na própria UI, cifrada na VPS
+
+Só vale a pena se o objetivo for **trocar de provedor sem SSH**. Quatro decisões:
+
+**a) Quem pode.** O `basic_auth` do Caddy é um login único e compartilhado (`mecanico`,
+`deploy/make_auth.sh`): quem usa o chat entraria também na tela de chaves. Então a página "Configurações"
+precisa de **senha própria** — `ADMIN_PASSWORD_HASH` (bcrypt) no `.env.prod`, conferida no app. Sem isso,
+qualquer pessoa com o login do site troca a chave e gasta o seu crédito.
+
+**b) Onde grava: arquivo em volume dedicado, _não_ no Postgres.** O `deploy/backup.sh` faz `pg_dump`
+diário em `./backups` e esses dumps são copiados para fora da VPS; chave em tabela viraria chave
+espalhada em backup. Volume novo, e o `./data` continua `:ro`:
+
+```yaml
+    volumes:
+      - ./data:/app/data:ro
+      - vault:/app/secrets          # gravável só pelo uid 1000 (usuário `app` do Dockerfile)
+```
+
+**c) Cifra: `Fernet` (AES-128-CBC + HMAC) da lib `cryptography`** — dependência nova no `pyproject.toml`.
+Chave-mestra `SECRETS_KEY` no `.env.prod`, gerada uma vez com `Fernet.generate_key()`.
+
+**d) O que isso protege de verdade** — vale dizer claramente, porque "cifrado" soa mais forte do que é:
+
+| Protege contra | Não protege contra |
+|---|---|
+| Cópia do volume, do backup ou de um `scp` errado | Quem tem root na VPS ou está no grupo `docker` |
+| `cat` casual no arquivo, chave em log | Execução de código dentro do app |
+| Commit acidental no git | — |
+
+O motivo é estrutural: o app precisa decifrar sozinho ao subir (sem alguém digitar senha a cada reboot),
+então a chave-mestra mora no mesmo host que o texto cifrado. Segredo que resiste a root exige cofre fora
+da máquina (Vault, Infisical, Doppler, KMS do provedor) — fica para quando fizer sentido.
+
+**Na tela:** a chave nunca é exibida de volta, só `AIza…4f2c` (4 últimos caracteres) com os botões
+*Substituir*, *Remover* e *Testar* (ping de `max_tokens=5`). Entrada em `st.text_input(type="password")`.
+Nunca em log, nunca em `out["debug"]`.
+
+### Ordem de precedência (a implementar em `config.secret()`)
+
+```
+1. chave digitada na sessão      (só memória, some ao fechar a aba)   ← teste rápido
+2. cofre cifrado do servidor     (nível 2, trocada pela UI)
+3. *_FILE / Docker secret        (nível 1)
+4. variável do .env.prod         (nível 0)
+5. nada → o provedor aparece desabilitado na lista, dizendo o que falta
+```
+
+### Recomendação
+
+| Quando | O quê |
+|---|---|
+| Agora | Nível 0. É onde as chaves entram hoje e resolve o "guardar na VPS de forma segura" para o uso atual |
+| Fase 5 do plano | Nível 1. Barato, não mexe na UI, tira a chave do `docker inspect` |
+| Só se quiser trocar provedor sem SSH | Nível 2. Traz dependência nova, senha de admin e uma superfície de ataque a mais |
+
+Independente do nível, três hábitos valem mais que a cifra:
+
+- **limite de gasto/alerta** na conta de cada API (xAI, Google, HF) — o login do site é compartilhado;
+- **rotacionar** a chave do Gemini que já foi colada em chat (`deploy/DEPLOY.md:12` já avisa) e qualquer
+  chave que passe por canal não confiável;
+- `secrets/` e `vault` no `.gitignore` e fora do `backup.sh`.
+
+---
+
+## 5. Riscos
 
 | Risco | Mitigação |
 |---|---|
@@ -219,9 +336,11 @@ Modelo de IA
 | Pessoa troca o embedding sem querer | Não exposto na UI; só leitura. `hybrid.py:21` já recusa a busca com mensagem clara |
 | Chave vazando em log ou na tela | UI mostra só estado; chave de sessão nunca persistida; nada de chave em `out["debug"]` |
 | Latência/custo de API por engano | Rodapé com provedor e tempo em cada resposta; `--provider` no eval mede antes de trocar o padrão |
+| Quem usa o chat troca/apaga chave pela UI | O `basic_auth` do Caddy é login único: a tela de chaves pede senha própria (`ADMIN_PASSWORD_HASH`) — seção 4 |
+| Chave de API em backup do Postgres | Cofre em volume próprio, fora do `pg_dump` do `deploy/backup.sh` |
 | Regressão na refatoração do `llm.py` | Fase 1 é refatoração pura: rodar `run_eval.py` com os 3 provedores atuais antes de seguir |
 
-## 5. Pendências a confirmar com você
+## 6. Pendências a confirmar com você
 
 1. **Chaves disponíveis** — já tem `XAI_API_KEY` e `HF_TOKEN`, ou o plano precisa prever o cadastro?
 2. **Modelo do HF** — algum preferido (Llama 3.3 70B, Qwen, Mistral), ou deixo um padrão e a UI permite trocar?
