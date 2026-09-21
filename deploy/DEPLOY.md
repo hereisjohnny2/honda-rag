@@ -39,12 +39,12 @@ dig +short manual.seudominio.com    # deve mostrar o IP da VPS
 
 ## 3. Código no servidor
 
-Com o repositório num remoto (GitHub etc.):
 ```bash
 sudo mkdir -p /opt/honda-rag && sudo chown $USER /opt/honda-rag
-git clone <URL-do-repositorio> /opt/honda-rag && cd /opt/honda-rag
+git clone https://github.com/hereisjohnny2/honda-rag.git /opt/honda-rag && cd /opt/honda-rag
 ```
-Sem remoto, da sua máquina: `git archive --format=tar.gz -o dist/code.tar.gz HEAD` e `scp` para o servidor.
+Clone por **HTTPS** (o repositório é público): o deploy automático faz `git fetch` no servidor e assim não
+precisa de chave do GitHub lá.
 
 ## 4. Configuração
 
@@ -102,14 +102,66 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f caddy app
 
 | Tarefa | Comando |
 |---|---|
-| Atualizar o código | `git pull && docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build` |
+| Atualizar o código | automático a cada push na `main` (seção 11); à mão: `./deploy/deploy.sh <sha>` |
+| Voltar uma versão | *Actions > Deploy > Run workflow* com o SHA anterior, ou `./deploy/deploy.sh <sha>` |
 | Trocar a senha do site | `./deploy/make_auth.sh` e `docker compose ... restart caddy` |
 | Novos dados (nova ingestão) | repita os passos 5 e 6 |
 | Backup do banco (cron 03:00) | `0 3 * * * /opt/honda-rag/deploy/backup.sh >> /opt/honda-rag/backups/backup.log 2>&1` |
+
+## 11. Deploy automático (GitHub Actions)
+
+A cada push na `main` (exceto mudanças só em `.md`, `eval/` e `scripts/`), o workflow
+[`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml):
+
+1. constrói a imagem do app no runner do GitHub e publica em `ghcr.io/hereisjohnny2/honda-rag:<sha>`
+   (a VPS não compila nada);
+2. entra na VPS por SSH e roda [`deploy/deploy.sh`](deploy.sh) do próprio commit: baixa a imagem, faz
+   `git checkout` do mesmo SHA (compose, Caddyfile, scripts), marca a imagem como `honda-rag-app:current`
+   e faz `up -d`. Se o Caddyfile mudou, recarrega o Caddy;
+3. espera o app ficar *healthy* (até 3 min). Se não ficar, volta para a imagem anterior e o job falha.
+
+O que ele **não** faz: enviar dados (passos 5 e 6) nem mexer no `.env.prod`/`auth.caddy`, que continuam só
+no servidor. Faça o **primeiro deploy à mão** (passos 1–9) e só depois ligue o automático.
+
+### Configuração (uma vez)
+
+1. **Usuário de deploy** na VPS com acesso ao Docker e à pasta (pode ser o seu usuário comum):
+   ```bash
+   sudo usermod -aG docker $USER      # saia e entre de novo no SSH
+   ```
+2. **Chave SSH só para o CI** (na sua máquina, sem senha):
+   ```bash
+   ssh-keygen -t ed25519 -N "" -C "github-actions-deploy" -f deploy_key
+   ssh-copy-id -i deploy_key.pub usuario@IP      # ou cole o .pub em ~/.ssh/authorized_keys na VPS
+   ssh-keyscan -H IP > known_hosts               # confira a impressão digital com a do painel da Hostinger
+   ```
+3. No GitHub, em *Settings > Environments*, crie o ambiente **`production`** e nele cadastre:
+
+   | Tipo | Nome | Valor |
+   |---|---|---|
+   | Secret | `VPS_SSH_KEY` | conteúdo de `deploy_key` (a privada) |
+   | Secret | `VPS_KNOWN_HOSTS` | conteúdo de `known_hosts` |
+   | Variable | `VPS_HOST` | IP (ou nome) da VPS |
+   | Variable | `VPS_USER` | usuário de deploy |
+   | Variable | `VPS_PORT` | opcional, padrão `22` |
+   | Variable | `VPS_APP_DIR` | opcional, padrão `/opt/honda-rag` |
+
+   Opcional: em *Required reviewers*, adicione você mesmo para cada deploy esperar um clique; em
+   *Deployment branches*, restrinja a `main`.
+4. Apague `deploy_key` da sua máquina depois de cadastrar (se perder, gere outra).
+
+A imagem no GHCR sai privada; o CI entrega à VPS um token que só vale durante o job, então o servidor não
+guarda credencial do GitHub. Para rodar `./deploy/deploy.sh <sha>` à mão no servidor, torne o pacote público
+(*Packages > honda-rag > Package settings*; ele só tem o código do app, que já é público) ou faça
+`docker login ghcr.io` com um token `read:packages`.
+
+**Não edite arquivos versionados no servidor:** o `deploy.sh` para com erro se houver alterações locais.
+Configuração do servidor fica no `.env.prod` e no `auth.caddy`, que o Git ignora.
 
 ## Segurança (resumo)
 
 - Só as portas 22/80/443 ficam abertas; Postgres e Ollama não são publicados.
 - Login por senha do Caddy na frente de tudo + HTTPS. Use senha longa e única.
+- A chave SSH do CI só serve para entrar na VPS; se vazar, remova a linha dela do `~/.ssh/authorized_keys`.
 - `.env.prod` e `deploy/auth.caddy` ficam só no servidor (`chmod 600`) e estão no `.gitignore`.
 - O conteúdo é um manual protegido por direitos autorais: mantenha o acesso restrito a quem precisa.
