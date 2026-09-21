@@ -11,3 +11,6 @@ backups/
 honda_rag.dump
 data.tar.gz
 *.egg-info/
+deploy_key
+deploy_key.pub
+known_hosts
