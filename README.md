@@ -128,4 +128,4 @@ python eval/run_retrieval.py                      # mesmas consultas: compare hi
 O `MIN_COSINE` (limiar de recusa, padrão 0.55) foi calibrado para o bge-m3; o `run_retrieval.py` imprime o cosseno do melhor chunk para perguntas respondíveis e para as que devem ser recusadas, o que permite escolher o novo limiar (`MIN_COSINE` no `.env`).
 
 ## Deploy em VPS
-Docker Compose de produção (Caddy com HTTPS e login, app, Postgres/pgvector, Ollama só com bge-m3), pensado para uma VPS de 4 GB sem GPU, com o chat por API. Passo a passo, scripts de exportação/restauração e verificação em [deploy/DEPLOY.md](deploy/DEPLOY.md).
+Docker Compose de produção (Caddy com HTTPS, acesso livre sem login, app, Postgres/pgvector, Ollama só com bge-m3), pensado para uma VPS de 4 GB sem GPU, com o chat por API. Passo a passo, scripts de exportação/restauração e verificação em [deploy/DEPLOY.md](deploy/DEPLOY.md).

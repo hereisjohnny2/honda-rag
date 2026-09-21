@@ -1,10 +1,7 @@
-# Caddy: HTTPS automático (Let's Encrypt) para o domínio em $DOMAIN + login por senha na frente do app.
+# Caddy: HTTPS automático (Let's Encrypt) para o domínio em $DOMAIN, na frente do app. Acesso livre, sem login.
 # O DNS do domínio precisa apontar (registro A) para o IP da VPS, com as portas 80 e 443 abertas.
 {$DOMAIN} {
 	encode gzip
-
-	# usuário e hash bcrypt em auth.caddy (gerado por deploy/make_auth.sh; não versionado)
-	import /etc/caddy/auth.caddy
 
 	header {
 		X-Content-Type-Options nosniff

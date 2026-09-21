@@ -1,6 +1,6 @@
 # Deploy em VPS (Hostinger KVM 1, Ubuntu + Docker)
 
-Stack: **Caddy** (HTTPS + login) → **app** (Streamlit) → **Postgres/pgvector** + **Ollama** (só bge-m3, na CPU).
+Stack: **Caddy** (HTTPS, acesso livre) → **app** (Streamlit) → **Postgres/pgvector** + **Ollama** (só bge-m3, na CPU).
 O chat usa uma API (Gemini ou Claude), porque a VPS não tem GPU. A ingestão (OCR) continua na sua máquina.
 
 > **Status:** os arquivos foram escritos e validados por análise estática (sintaxe, `docker compose config`,
@@ -10,7 +10,8 @@ O chat usa uma API (Gemini ou Claude), porque a VPS não tem GPU. A ingestão (O
 ## 0. Antes de começar
 
 - **Troque a chave do Gemini** que foi colada no chat e gere uma nova (Google AI Studio). Defina um limite
-  de gasto/alerta de cobrança na conta da API: qualquer pessoa com o login usa o seu crédito.
+  de gasto/alerta de cobrança na conta da API: o site é aberto, então qualquer pessoa
+  que chegar nele usa o seu crédito.
 - Tenha o domínio (ex.: `manual.seudominio.com`) e acesso ao painel de DNS.
 
 ## 1. Criar a VPS
@@ -52,7 +53,6 @@ precisa de chave do GitHub lá.
 cd /opt/honda-rag
 cp .env.prod.example .env.prod && chmod 600 .env.prod
 nano .env.prod          # DOMAIN, PG_PASSWORD (senha longa), LLM_PROVIDER e a chave da API
-./deploy/make_auth.sh mecanico     # cria deploy/auth.caddy (login do site)
 ```
 
 ## 5. Enviar os dados (da sua máquina Windows)
@@ -87,7 +87,7 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f caddy app
 
 ## 9. Verificar (o que ainda não foi testado)
 
-- `curl -I https://manual.seudominio.com` deve dar **401** (sem login) e, com o login, a página.
+- `curl -I https://manual.seudominio.com` deve dar **200** (o site é aberto, sem login).
 - Faça uma pergunta pela UI e clique numa fonte para ver a página original.
 - **Latência:** o KVM 1 tem 1 vCPU e cada pergunta embute até ~7 textos com o bge-m3 na CPU. Meça o tempo total
   e `docker stats`/`free -h` durante uma pergunta. Se passar de ~10 s, migre para o KVM 2 (2 vCPU) ou reduza o
@@ -103,7 +103,6 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f caddy app
 |---|---|
 | Atualizar o código | automático a cada push na `main` (seção 11); à mão: `./deploy/deploy.sh <sha>` |
 | Voltar uma versão | *Actions > Deploy > Run workflow* com o SHA anterior, ou `./deploy/deploy.sh <sha>` |
-| Trocar a senha do site | `./deploy/make_auth.sh` e `docker compose ... restart caddy` |
 | Novos dados (nova ingestão) | repita os passos 5 e 6 |
 | Backup do banco (cron 03:00) | `0 3 * * * /opt/honda-rag/deploy/backup.sh >> /opt/honda-rag/backups/backup.log 2>&1` |
 
@@ -119,8 +118,8 @@ A cada push na `main` (exceto mudanças só em `.md`, `eval/` e `scripts/`), o w
    e faz `up -d`. Se o Caddyfile mudou, recarrega o Caddy;
 3. espera o app ficar *healthy* (até 3 min). Se não ficar, volta para a imagem anterior e o job falha.
 
-O que ele **não** faz: enviar dados (passos 5 e 6) nem mexer no `.env.prod`/`auth.caddy`, que continuam só
-no servidor. Faça o **primeiro deploy à mão** (passos 1–9) e só depois ligue o automático.
+O que ele **não** faz: enviar dados (passos 5 e 6) nem mexer no `.env.prod`, que continua só no
+servidor. Faça o **primeiro deploy à mão** (passos 1–9) e só depois ligue o automático.
 
 ### Configuração (uma vez)
 
@@ -155,12 +154,12 @@ guarda credencial do GitHub. Para rodar `./deploy/deploy.sh <sha>` à mão no se
 `docker login ghcr.io` com um token `read:packages`.
 
 **Não edite arquivos versionados no servidor:** o `deploy.sh` para com erro se houver alterações locais.
-Configuração do servidor fica no `.env.prod` e no `auth.caddy`, que o Git ignora.
+Configuração do servidor fica no `.env.prod`, que o Git ignora.
 
 ## Segurança (resumo)
 
 - Só as portas 22/80/443 ficam abertas; Postgres e Ollama não são publicados.
-- Login por senha do Caddy na frente de tudo + HTTPS. Use senha longa e única.
+- Sem login: o site é público (HTTPS pelo Caddy). Cada pergunta consome a API do chat, então mantenha o
+  limite de gasto/alerta de cobrança da conta da API (passo 0).
 - A chave SSH do CI só serve para entrar na VPS; se vazar, remova a linha dela do `~/.ssh/authorized_keys`.
-- `.env.prod` e `deploy/auth.caddy` ficam só no servidor (`chmod 600`) e estão no `.gitignore`.
-- O conteúdo é um manual protegido por direitos autorais: mantenha o acesso restrito a quem precisa.
+- `.env.prod` fica só no servidor (`chmod 600`) e está no `.gitignore`.

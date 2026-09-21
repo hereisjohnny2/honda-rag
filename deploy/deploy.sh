@@ -20,7 +20,6 @@ main() {
   local dc="docker compose --env-file .env.prod -f docker-compose.prod.yml"
 
   [ -f .env.prod ]         || die "falta .env.prod (passo 4 do deploy/DEPLOY.md)"
-  [ -f deploy/auth.caddy ] || die "falta deploy/auth.caddy (rode deploy/make_auth.sh)"
   # Só conteúdo conta: um `chmod +x` feito no servidor não é alteração (e não pode travar o checkout).
   git config core.fileMode false
   if ! git diff --quiet HEAD --; then
