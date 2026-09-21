@@ -1,6 +1,7 @@
 # Produção (VPS sem GPU): Caddy (HTTPS + login) -> app (Streamlit) -> Postgres/pgvector + Ollama (só bge-m3).
 # Uso, na pasta do projeto no servidor (passo a passo em deploy/DEPLOY.md):
 #   docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+# Depois do primeiro deploy, as atualizações vêm do GitHub Actions (.github/workflows/deploy.yml).
 #
 # Só o Caddy publica portas (80/443). Postgres e Ollama ficam na rede interna do compose.
 # Limites de memória pensados para 4 GB de RAM (KVM 1): somam ~3,4 GB; crie 2 GB de swap por segurança.
@@ -27,6 +28,9 @@ services:
     mem_limit: 128m
 
   app:
+    # Normalmente a imagem vem pronta do CI (GHCR); deploy/deploy.sh a baixa e marca como :current.
+    # Sem ela, `up` constrói a partir do Dockerfile (e `up --build` sempre reconstrói com esse nome).
+    image: honda-rag-app:current
     build: .
     restart: unless-stopped
     env_file: .env.prod

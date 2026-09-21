@@ -1,0 +1,110 @@
+# Deploy na VPS: constrói a imagem do app aqui (não na VPS de 1 vCPU), publica no GHCR e manda o servidor
+# atualizar por SSH (deploy/deploy.sh). Configuração dos segredos/variáveis: deploy/DEPLOY.md, seção 11.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:          # só documentação e ferramentas locais (ingestão/avaliação) não geram deploy
+      - "**.md"
+      - "eval/**"
+      - "scripts/**"
+      - ".env.example"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit, tag ou branch a publicar (para rollback, o SHA de um deploy anterior)"
+        required: false
+        default: main
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false      # nunca interromper um deploy no meio; o próximo espera
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      sha: ${{ steps.rev.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - id: rev
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Validar o compose de produção
+        run: |
+          touch .env.prod
+          DOMAIN=example.com PG_PASSWORD=x docker compose --env-file .env.prod -f docker-compose.prod.yml config -q
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}:${{ steps.rev.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.rev.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production       # aprovação manual opcional: Settings > Environments > production
+    permissions:
+      contents: read
+      packages: read              # o token deste job baixa a imagem na VPS e expira ao fim do job
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+
+      - name: Configurar SSH
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Atualizar o servidor
+        env:
+          HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+          PORT: ${{ vars.VPS_PORT || '22' }}
+          APP_DIR: ${{ vars.VPS_APP_DIR || '/opt/honda-rag' }}
+          SHA: ${{ needs.build.outputs.sha }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # As credenciais vão no stdin, antes do script, e não na linha de comando remota.
+          {
+            printf 'export APP_DIR=%q GHCR_USER=%q GHCR_TOKEN=%q\n' "$APP_DIR" "$GITHUB_ACTOR" "$GHCR_TOKEN"
+            cat deploy/deploy.sh
+          } | ssh -i ~/.ssh/deploy_key -p "$PORT" \
+                -o StrictHostKeyChecking=yes -o BatchMode=yes -o ServerAliveInterval=30 \
+                "$VPS_USER@$HOST" "bash -s -- $SHA $IMAGE"
+
+      - name: Resumo
+        if: success()
+        run: echo "Publicado \`${{ needs.build.outputs.sha }}\` na VPS." >> "$GITHUB_STEP_SUMMARY"
