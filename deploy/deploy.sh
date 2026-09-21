@@ -21,7 +21,12 @@ main() {
 
   [ -f .env.prod ]         || die "falta .env.prod (passo 4 do deploy/DEPLOY.md)"
   [ -f deploy/auth.caddy ] || die "falta deploy/auth.caddy (rode deploy/make_auth.sh)"
-  git diff --quiet HEAD -- || die "há alterações locais em arquivos versionados; o servidor deve espelhar o repositório"
+  # Só conteúdo conta: um `chmod +x` feito no servidor não é alteração (e não pode travar o checkout).
+  git config core.fileMode false
+  if ! git diff --quiet HEAD --; then
+    git status --short --untracked-files=no >&2
+    die "há alterações locais nos arquivos acima; o servidor deve espelhar o repositório (desfaça com: git checkout -- <arquivo>)"
+  fi
 
   echo "==> imagem ${image}:${sha}"
   if [ -n "${GHCR_TOKEN:-}" ]; then

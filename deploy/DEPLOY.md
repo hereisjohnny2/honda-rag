@@ -52,7 +52,6 @@ precisa de chave do GitHub lá.
 cd /opt/honda-rag
 cp .env.prod.example .env.prod && chmod 600 .env.prod
 nano .env.prod          # DOMAIN, PG_PASSWORD (senha longa), LLM_PROVIDER e a chave da API
-chmod +x deploy/*.sh
 ./deploy/make_auth.sh mecanico     # cria deploy/auth.caddy (login do site)
 ```
 
