@@ -1,5 +1,11 @@
 # Plano — Seleção de modelo de IA (Gemini, Grok, Hugging Face, Claude, Ollama)
 
+> **Status: fases 1–5 implementadas** (registro de provedores, adaptador Grok/HF, escolha em runtime,
+> seletor na UI, CLI/eval/`check_env`/docs). Não testado contra as APIs reais nem contra um Postgres com
+> dados — só verificado localmente (sintaxe, wiring do registro, contextvars, e o adaptador HTTP contra
+> um servidor fake). As **fases 6 (guardar conversas)** e o **nível 2 de chaves (cofre na UI)** da seção 4
+> continuam só planejadas: dependem de decisões em aberto (seção 7) que ainda não foram tomadas.
+
 Objetivo: trocar o provedor de LLM **na interface**, sem editar o `.env` nem reiniciar o Streamlit, e
 acrescentar dois provedores novos (**Grok/xAI** e **Hugging Face**) aos três já existentes
 (`ollama`, `claude`, `gemini`).

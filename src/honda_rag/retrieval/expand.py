@@ -3,18 +3,21 @@ from __future__ import annotations
 
 from psycopg.rows import dict_row
 
-from honda_rag import config
+from honda_rag import config, llm
+from honda_rag import providers as P
 from honda_rag.db import repo
 
 
 
 def build_context(hits: list[dict], spec_rows: list[dict], extra_rows: list[str],
                   max_chunks: int | None = None) -> tuple[str, list[dict]]:
-    """Monta o CONTEXTO. Retorna (texto, chunks usados)."""
+    """Monta o CONTEXTO. Retorna (texto, chunks usados). O orçamento (caracteres/chunks) segue o
+    provedor de LLM ativo nesta chamada (honda_rag.llm.active) — local ganha menos contexto que API."""
     parts: list[str] = []
     used: list[dict] = []
-    max_chunks = max_chunks or config.CONTEXT_CHUNKS
-    budget = config.CONTEXT_CHARS
+    chars_budget, chunks_budget = config.context_budget(P.get(llm.active().provider).budget)
+    max_chunks = max_chunks or chunks_budget
+    budget = chars_budget
     for line in extra_rows:
         parts.append(line)
         budget -= len(line)

@@ -95,18 +95,33 @@ python eval/run_eval.py --load
 - Para o manual completo: `--stage load --pages 25-1458` (o padrão continua sendo `PILOT_PAGES`).
 
 ### Provedor de LLM (chat)
-`LLM_PROVIDER` no `.env` escolhe quem responde e classifica a pergunta; os embeddings continuam locais (bge-m3).
+`LLM_PROVIDER` no `.env` escolhe o **padrão**: quem responde e classifica a pergunta quando ninguém troca
+nada. A UI (sidebar "Modelo de IA") e a CLI (`--provider`) trocam por sessão/pergunta, sem editar o
+`.env`, entre qualquer provedor abaixo que tiver a chave definida (o Ollama, local, não precisa de
+chave e por isso está sempre disponível). Os embeddings continuam locais (bge-m3) em qualquer caso —
+não são escolhidos aqui (ver "Provedor de embeddings" abaixo).
 
 | Valor | Modelo (padrão) | Chave no `.env` |
 |---|---|---|
 | `ollama` (padrão) | `LLM_MODEL=qwen3:8b` | nenhuma |
 | `claude` | `CLAUDE_MODEL=claude-haiku-4-5` | `ANTHROPIC_API_KEY` |
 | `gemini` | `GEMINI_MODEL=gemini-2.5-flash` | `GEMINI_API_KEY` |
+| `grok` | `GROK_MODEL=grok-4-fast` | `XAI_API_KEY` |
+| `hf` | `HF_MODEL=meta-llama/Llama-3.3-70B-Instruct` | `HF_TOKEN` |
 
-Com `claude`/`gemini`, trechos do manual são enviados à API e o contexto da resposta sobe de 9.000 para 24.000 caracteres (`CONTEXT_CHARS`, `CONTEXT_CHUNKS`). Para comparar provedores no mesmo conjunto de perguntas, sem editar o `.env`:
+Grok e Hugging Face falam a API de chat no formato da OpenAI (`GROK_MODEL`/`HF_MODEL` e as duas chaves
+acima; `XAI_BASE_URL`/`HF_BASE_URL` têm padrão e normalmente não precisam mudar). Nomes de modelo mudam
+com frequência: confira sempre na documentação do provedor antes de fixar um no `.env`. O Hugging Face
+roteia para backends diferentes conforme o modelo; alguns não devolvem JSON estruturado, então nesse
+provedor a extração de intenção pede JSON no texto do prompt em vez de usar `response_format` — sem
+prejuízo para quem só usa o chat.
+
+Com qualquer provedor de API (`claude`, `gemini`, `grok`, `hf`), trechos do manual são enviados a ele e o
+contexto da resposta sobe de 9.000 para 24.000 caracteres (`CONTEXT_CHARS`, `CONTEXT_CHUNKS`). Para
+comparar provedores no mesmo conjunto de perguntas, sem editar o `.env`:
 ```powershell
-$env:LLM_PROVIDER="claude"; python eval/run_eval.py
-$env:LLM_PROVIDER="gemini"; python eval/run_eval.py
+python eval/run_eval.py --provider claude
+python eval/run_eval.py --provider gemini,grok,hf    # uma rodada por provedor + tabela comparativa
 ```
 
 ### Provedor de embeddings

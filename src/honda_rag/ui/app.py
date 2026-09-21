@@ -7,7 +7,8 @@ from __future__ import annotations
 import streamlit as st
 from psycopg.rows import dict_row
 
-from honda_rag import config, rag
+from honda_rag import config, llm, rag
+from honda_rag import providers as P
 from honda_rag.db import repo
 
 st.set_page_config(page_title="Honda Civic 92-95 · Manual", page_icon="🔧", layout="wide")
@@ -36,6 +37,26 @@ with st.sidebar:
     trans = st.radio("Transmissão", ["(qualquer)", "M/T", "A/T"], horizontal=True)
     st.caption("O motor filtra as respostas. D16Y7/D16Y8 não estão neste manual (Civic 1996-2000).")
     st.divider()
+
+    st.header("Modelo de IA")
+    on = P.available()                              # locais sempre; de API só com a chave no .env
+    missing = [p for p in P.PROVIDERS.values() if p not in on]
+    default_key = config.LLM_PROVIDER if config.LLM_PROVIDER in {p.key for p in on} else on[0].key
+    llm_provider = st.selectbox(
+        "Provedor", [p.key for p in on], index=[p.key for p in on].index(default_key),
+        format_func=lambda k: P.PROVIDERS[k].label,
+        help="Vale a partir da próxima pergunta; o histórico já respondido não muda.")
+    with st.expander("Ajustes avançados"):
+        model_override = st.text_input(
+            "Modelo", value="", placeholder=P.PROVIDERS[llm_provider].default_model,
+            help="Vazio usa o padrão do provedor (mostrado como dica acima).")
+        st.caption(f"Embeddings: {config.EMBED_ID} (local) — trocar exige reindexar o banco; "
+                   "não é escolhido aqui.")
+    if missing:
+        st.caption("Sem chave no .env: " + ", ".join(f"{p.label} ({p.key_env})" for p in missing))
+    llm_choice = llm.Choice(llm_provider, model_override.strip() or None)
+
+    st.divider()
     st.caption("Piloto: páginas 25–110 do PDF (seções 1, 3, 4, 5 e 6 até a p. 6-25).")
     if st.button("Limpar conversa"):
         st.session_state.pop("history", None)
@@ -48,6 +69,9 @@ history: list[dict] = st.session_state.setdefault("history", [])
 def render(entry: dict, idx: int) -> None:
     with st.chat_message("assistant"):
         st.markdown(entry["answer"])
+        if entry.get("provider"):
+            st.caption(f"{P.PROVIDERS[entry['provider']].label} · {entry.get('model') or '?'} · "
+                      f"{entry.get('seconds', '?')} s")
         if entry.get("refused"):
             return
         if entry["sources"]:
@@ -75,8 +99,8 @@ for i, turn in enumerate(history):
 if q := st.chat_input("Pergunte em português (ex.: qual o torque dos parafusos do cabeçote?)"):
     with st.chat_message("user"):
         st.write(q)
-    with st.spinner("Consultando o manual..."):
-        res = rag.answer(q, engine, None if trans == "(qualquer)" else trans)
+    with st.spinner(f"Consultando o manual ({P.PROVIDERS[llm_provider].label})..."):
+        res = rag.answer(q, engine, None if trans == "(qualquer)" else trans, choice=llm_choice)
     history.append(res)
     st.rerun()
 

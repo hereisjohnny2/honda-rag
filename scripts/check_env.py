@@ -1,8 +1,9 @@
-"""Verifica o ambiente da Fase 0: Tesseract, Ollama (+ modelos), Postgres/pgvector e PDF.
+"""Verifica o ambiente da Fase 0: Tesseract, Ollama (+ modelos), Postgres/pgvector, PDF e provedores de LLM.
 
 Uso:
     python scripts/check_env.py            # todas as checagens
     python scripts/check_env.py --no-ocr   # pula o teste de OCR na página 42
+    python scripts/check_env.py --ping-llm # além da chave, faz 1 chamada mínima a cada provedor com chave
 """
 from __future__ import annotations
 
@@ -116,6 +117,66 @@ def check_ollama() -> None:
                warn_only=True)
 
 
+# --------------------------------------------------------------------------- Provedores de LLM (chat)
+# Chave em ordem de exibição na UI/CLI; Ollama já foi checado acima (é o único sem chave).
+LLM_PROVIDERS = [
+    ("claude", "ANTHROPIC_API_KEY", "CLAUDE_MODEL", "claude-haiku-4-5"),
+    ("gemini", "GEMINI_API_KEY", "GEMINI_MODEL", "gemini-2.5-flash"),
+    ("grok", "XAI_API_KEY", "GROK_MODEL", "grok-4-fast"),
+    ("hf", "HF_TOKEN", "HF_MODEL", "meta-llama/Llama-3.3-70B-Instruct"),
+]
+
+
+def _ping_openai_compat(base_url: str, key: str, model: str) -> None:
+    body = json.dumps({"model": model, "messages": [{"role": "user", "content": "oi"}],
+                       "max_tokens": 5}).encode()
+    req = urllib.request.Request(f"{base_url}/chat/completions", data=body,
+                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        json.load(r)
+
+
+def check_llm_providers(do_ping: bool) -> None:
+    """Só a chave (barato, sempre roda); `--ping-llm` faz 1 chamada mínima por provedor com chave — gasta
+    um pouco de crédito, por isso é opt-in. Nenhum provedor de API é obrigatório: sem chave, ele some da
+    lista da UI/CLI (o Ollama local continua funcionando)."""
+    endpoints = {"grok": "https://api.x.ai/v1", "hf": "https://router.huggingface.co/v1"}
+    for name, key_env, model_env, default_model in LLM_PROVIDERS:
+        key = os.getenv(key_env, "").strip()
+        report(bool(key), f"{name}: {key_env} definida", f"opcional — defina para usar {name} no chat",
+               warn_only=True)
+        if not (key and do_ping):
+            continue
+        model = os.getenv(model_env, default_model)
+        try:
+            if name in endpoints:
+                _ping_openai_compat(endpoints[name], key, model)
+            elif name == "claude":
+                req = urllib.request.Request(
+                    "https://api.anthropic.com/v1/messages",
+                    data=json.dumps({"model": model, "max_tokens": 5,
+                                     "messages": [{"role": "user", "content": "oi"}]}).encode(),
+                    headers={"x-api-key": key, "anthropic-version": "2023-06-01",
+                             "Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    json.load(r)
+            elif name == "gemini":
+                url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+                      f"?key={key}")
+                req = urllib.request.Request(
+                    url, data=json.dumps({"contents": [{"parts": [{"text": "oi"}]}],
+                                          "generationConfig": {"maxOutputTokens": 5}}).encode(),
+                    headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    json.load(r)
+            report(True, f"{name}: chamada de teste ok (modelo {model})")
+        except urllib.error.HTTPError as e:
+            report(False, f"{name}: chamada de teste falhou (HTTP {e.code})",
+                   f"confira {key_env} e {model_env}={model}", warn_only=True)
+        except Exception as e:  # noqa: BLE001
+            report(False, f"{name}: chamada de teste falhou ({e})", warn_only=True)
+
+
 # --------------------------------------------------------------------------- Postgres
 def check_postgres() -> None:
     try:
@@ -178,10 +239,13 @@ def check_pdf_and_ocr(tess: str | None, run_ocr: bool) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-ocr", action="store_true", help="pula o teste de OCR")
+    ap.add_argument("--ping-llm", action="store_true",
+                    help="faz 1 chamada mínima a cada provedor de LLM com chave definida")
     args = ap.parse_args()
 
     print("== Tesseract"); tess = check_tesseract()
     print("\n== Ollama"); check_ollama()
+    print("\n== Provedores de LLM (chat)"); check_llm_providers(args.ping_llm)
     print("\n== Postgres"); check_postgres()
     print("\n== PDF / OCR"); check_pdf_and_ocr(tess, not args.no_ocr)
 

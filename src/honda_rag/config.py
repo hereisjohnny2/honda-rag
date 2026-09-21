@@ -41,17 +41,37 @@ PILOT_PAGES = _pages(os.getenv("PILOT_PAGES", "1-110"))
 FIRST_SCAN_PAGE = 25  # páginas 1-24 são o sumário do ManualsLib (texto nativo)
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()   # ollama | claude | gemini
+# Provedor de chat PADRÃO (ollama | claude | gemini | grok | hf). A UI e a CLI podem sobrepor por
+# sessão/chamada (honda_rag.llm.use); quem não mexe em nada usa este valor. Lista completa e metadados
+# de cada provedor (chave, modelo padrão, URL) ficam em honda_rag.providers.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen3:8b")                       # modelo do Ollama
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5")          # usado se LLM_PROVIDER=claude
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")          # usado se LLM_PROVIDER=gemini
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5")          # usado se o provedor for claude
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")          # usado se o provedor for gemini
+GROK_MODEL = os.getenv("GROK_MODEL", "grok-4-fast")                   # usado se o provedor for grok
+HF_MODEL = os.getenv("HF_MODEL", "meta-llama/Llama-3.3-70B-Instruct")  # usado se o provedor for hf
+# Grok e Hugging Face falam a API de chat no formato da OpenAI (POST {base}/chat/completions).
+XAI_BASE_URL = os.getenv("XAI_BASE_URL", "https://api.x.ai/v1").rstrip("/")
+HF_BASE_URL = os.getenv("HF_BASE_URL", "https://router.huggingface.co/v1").rstrip("/")
 # Orçamento de "thinking" do Gemini: 0 desliga (só modelos flash aceitam 0; para "pro" fica vazio).
 GEMINI_THINKING_BUDGET = os.getenv("GEMINI_THINKING_BUDGET", "" if "pro" in GEMINI_MODEL.lower() else "0")
 USE_SYSTEM_CERTS = os.getenv("USE_SYSTEM_CERTS", "1") != "0"   # certificados do Windows (proxy corporativo)
-_API_PROVIDER = LLM_PROVIDER in ("claude", "gemini")
-# Contexto da resposta (caracteres). O 8B local tem 8k tokens; as APIs aguentam muito mais.
-CONTEXT_CHARS = int(os.getenv("CONTEXT_CHARS", "24000" if _API_PROVIDER else "9000"))
-CONTEXT_CHUNKS = int(os.getenv("CONTEXT_CHUNKS", "8" if _API_PROVIDER else "5"))
+_CONTEXT_CHARS_ENV = os.getenv("CONTEXT_CHARS", "").strip()
+_CONTEXT_CHUNKS_ENV = os.getenv("CONTEXT_CHUNKS", "").strip()
+
+
+def context_budget(kind: str) -> tuple[int, int]:
+    """(CONTEXT_CHARS, CONTEXT_CHUNKS) para um provedor de orçamento `kind` ("local" ou "api";
+    honda_rag.providers.Provider.budget). O .env, quando define CONTEXT_CHARS/CONTEXT_CHUNKS, sempre
+    vence; senão 24.000/8 para provedores de API e 9.000/5 para o 8B local — o local tem 8k tokens de
+    contexto, as APIs aguentam muito mais. Função (não constante) porque o provedor pode mudar por
+    sessão/chamada (honda_rag.llm.use), depois do import deste módulo."""
+    d_chars, d_chunks = (24000, 8) if kind == "api" else (9000, 5)
+    chars = int(_CONTEXT_CHARS_ENV) if _CONTEXT_CHARS_ENV else d_chars
+    chunks = int(_CONTEXT_CHUNKS_ENV) if _CONTEXT_CHUNKS_ENV else d_chunks
+    return chars, chunks
+
+
 VLM_MODEL = os.getenv("VLM_MODEL", "qwen2.5vl:7b")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3")                      # modelo do Ollama
 # Embeddings: "ollama" (bge-m3, local) ou "gemini" (API). Os vetores do banco e os da pergunta precisam

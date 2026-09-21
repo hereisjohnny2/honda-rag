@@ -1,11 +1,12 @@
-"""CLI: python -m honda_rag.cli "Qual o torque dos parafusos do cabeçote?" [--engine D16Z6] [--debug]"""
+"""CLI: python -m honda_rag.cli "Qual o torque dos parafusos do cabeçote?" [--engine D16Z6]
+                                [--provider gemini] [--model gemini-2.5-pro] [--debug]"""
 from __future__ import annotations
 
 import argparse
 import json
 import sys
 
-from honda_rag import config, rag
+from honda_rag import config, llm, providers, rag
 
 
 def main() -> None:
@@ -14,10 +15,17 @@ def main() -> None:
     ap.add_argument("question")
     ap.add_argument("--engine", default=config.DEFAULT_ENGINE)
     ap.add_argument("--trans", choices=["M/T", "A/T"])
+    ap.add_argument("--provider", choices=sorted(providers.PROVIDERS),
+                    help="sobrepõe LLM_PROVIDER do .env só para esta pergunta")
+    ap.add_argument("--model", help="sobrepõe o modelo padrão do provedor (com --provider ou sem)")
     ap.add_argument("--debug", action="store_true")
     a = ap.parse_args()
-    r = rag.answer(a.question, a.engine, a.trans, debug=a.debug)
+    choice = llm.Choice(a.provider, a.model) if a.provider else (
+        llm.Choice(config.LLM_PROVIDER, a.model) if a.model else None)
+    r = rag.answer(a.question, a.engine, a.trans, debug=a.debug, choice=choice)
     print(r["answer"])
+    if a.debug or a.provider or a.model:
+        print(f"\n[{r['provider']} · {r['model']} · {r['seconds']}s]")
     if r["sources"]:
         print("\nFontes: " + ", ".join("p. " + s for s in r["sources"]))
     if r["figures"]:
