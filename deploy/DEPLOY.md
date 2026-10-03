@@ -1,7 +1,12 @@
 # Deploy em VPS (Hostinger KVM 1, Ubuntu + Docker)
 
-Stack: **Caddy** (HTTPS, acesso livre) → **app** (Streamlit) → **Postgres/pgvector** + **Ollama** (só bge-m3, na CPU).
-O chat usa uma API (Gemini ou Claude), porque a VPS não tem GPU. A ingestão (OCR) continua na sua máquina.
+Stack: **Caddy** (proxy compartilhado da VPS, HTTPS, acesso livre) → **app** (Streamlit) →
+**Postgres/pgvector** + **Ollama** (só bge-m3, na CPU). O chat usa uma API (Gemini ou Claude), porque a
+VPS não tem GPU. A ingestão (OCR) continua na sua máquina.
+
+O Caddy não é deste projeto: é um proxy único por VPS (`deploy/edge/`), dono das portas 80/443, na frente
+de quantas apps a máquina tiver. Isso deixa espaço para subir uma segunda aplicação depois sem conflito de
+porta — ver [Adicionar uma segunda aplicação](#adicionar-uma-segunda-aplicação) no final deste arquivo.
 
 > **Status:** os arquivos foram escritos e validados por análise estática (sintaxe, `docker compose config`,
 > imports com só as dependências de runtime). **A imagem nunca foi construída nem o compose subiu de fato**
@@ -47,15 +52,29 @@ git clone https://github.com/hereisjohnny2/honda-rag.git /opt/honda-rag && cd /o
 Clone por **HTTPS** (o repositório é público): o deploy automático faz `git fetch` no servidor e assim não
 precisa de chave do GitHub lá.
 
-## 4. Configuração
+## 4. Proxy compartilhado (edge)
+
+Uma vez por VPS, antes de subir qualquer app. É o Caddy quem vai cuidar do HTTPS e das portas 80/443; a
+app em si (passo 8) não publica porta nenhuma.
+
+```bash
+docker network create edge
+cd /opt/honda-rag/deploy/edge
+cp .env.edge.example .env.edge && chmod 600 .env.edge
+nano .env.edge           # HONDA_RAG_DOMAIN
+docker compose --env-file .env.edge up -d
+cd /opt/honda-rag
+```
+
+## 5. Configuração
 
 ```bash
 cd /opt/honda-rag
 cp .env.prod.example .env.prod && chmod 600 .env.prod
-nano .env.prod          # DOMAIN, PG_PASSWORD (senha longa), LLM_PROVIDER e a chave da API
+nano .env.prod          # PG_PASSWORD (senha longa), LLM_PROVIDER e a chave da API
 ```
 
-## 5. Enviar os dados (da sua máquina Windows)
+## 7. Enviar os dados (da sua máquina Windows)
 
 Com o Rancher Desktop aberto e o banco local no ar:
 ```powershell
@@ -64,28 +83,31 @@ scp dist\honda_rag.dump dist\data.tar.gz usuario@IP:/opt/honda-rag/
 ```
 Vão só o dump (~50 MB) e as imagens da UI (~420 MB). **O PDF do manual não vai** (direitos autorais).
 
-## 6. Restaurar
+## 8. Restaurar
 
 ```bash
 cd /opt/honda-rag && ./deploy/restore.sh
 ```
 A conferência final deve mostrar `chunks=1638 com_vetor=1638 modelo=bge-m3` e as contagens de imagens.
 
-## 7. Subir
+## 9. Subir
 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
 ```
-Na primeira vez o `ollama-init` baixa o bge-m3 (~1,2 GB); leva alguns minutos.
+Na primeira vez o `ollama-init` baixa o bge-m3 (~1,2 GB); leva alguns minutos. Precisa do proxy do
+passo 4 já no ar (rede `edge` criada e o Caddy compartilhado subido), senão o app sobe mas fica
+inacessível por fora.
 
-## 8. Acompanhar
+## 10. Acompanhar
 
 ```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml ps
-docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f caddy app
+docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f app
+cd deploy/edge && docker compose --env-file .env.edge logs -f caddy   # logs do proxy compartilhado
 ```
 
-## 9. Verificar (o que ainda não foi testado)
+## 11. Verificar (o que ainda não foi testado)
 
 - `curl -I https://manual.seudominio.com` deve dar **200** (o site é aberto, sem login).
 - Faça uma pergunta pela UI e clique numa fonte para ver a página original.
@@ -97,16 +119,17 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f caddy app
   `thinking_budget=0`: nesse caso ponha `GEMINI_THINKING_BUDGET=` (vazio) no `.env.prod`.
 - `MIN_COSINE` (limiar de recusa) segue 0.55, calibrado para o bge-m3 (o mesmo modelo do banco).
 
-## 10. Rotina
+## 12. Rotina
 
 | Tarefa | Comando |
 |---|---|
-| Atualizar o código | automático a cada push na `main` (seção 11); à mão: `./deploy/deploy.sh <sha>` |
+| Atualizar o código | automático a cada push na `main` (seção 13); à mão: `./deploy/deploy.sh <sha>` |
 | Voltar uma versão | *Actions > Deploy > Run workflow* com o SHA anterior, ou `./deploy/deploy.sh <sha>` |
-| Novos dados (nova ingestão) | repita os passos 5 e 6 |
+| Novos dados (nova ingestão) | repita os passos 6 e 7 |
+| Mudou domínio ou adicionou uma app (`sites/*.caddy`) | `cd deploy/edge && docker compose --env-file .env.edge exec -T caddy caddy reload --config /etc/caddy/Caddyfile` |
 | Backup do banco (cron 03:00) | `0 3 * * * /opt/honda-rag/deploy/backup.sh >> /opt/honda-rag/backups/backup.log 2>&1` |
 
-## 11. Deploy automático (GitHub Actions)
+## 13. Deploy automático (GitHub Actions)
 
 A cada push na `main` (exceto mudanças só em `.md`, `eval/` e `scripts/`), o workflow
 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml):
@@ -114,12 +137,13 @@ A cada push na `main` (exceto mudanças só em `.md`, `eval/` e `scripts/`), o w
 1. constrói a imagem do app no runner do GitHub e publica em `ghcr.io/hereisjohnny2/honda-rag:<sha>`
    (a VPS não compila nada);
 2. entra na VPS por SSH e roda [`deploy/deploy.sh`](deploy.sh) do próprio commit: baixa a imagem, faz
-   `git checkout` do mesmo SHA (compose, Caddyfile, scripts), marca a imagem como `honda-rag-app:current`
-   e faz `up -d`. Se o Caddyfile mudou, recarrega o Caddy;
+   `git checkout` do mesmo SHA (compose, scripts) e `up -d` com a imagem marcada como
+   `honda-rag-app:current`;
 3. espera o app ficar *healthy* (até 3 min). Se não ficar, volta para a imagem anterior e o job falha.
 
-O que ele **não** faz: enviar dados (passos 5 e 6) nem mexer no `.env.prod`, que continua só no
-servidor. Faça o **primeiro deploy à mão** (passos 1–9) e só depois ligue o automático.
+O que ele **não** faz: enviar dados (passos 6 e 7), mexer no `.env.prod` (continua só no servidor) nem
+tocar no proxy compartilhado (`deploy/edge/`, que não é deste pipeline — mudanças lá são manuais, ver
+a tabela acima). Faça o **primeiro deploy à mão** (passos 1–11) e só depois ligue o automático.
 
 ### Configuração (uma vez)
 
@@ -156,10 +180,50 @@ guarda credencial do GitHub. Para rodar `./deploy/deploy.sh <sha>` à mão no se
 **Não edite arquivos versionados no servidor:** o `deploy.sh` para com erro se houver alterações locais.
 Configuração do servidor fica no `.env.prod`, que o Git ignora.
 
+## Adicionar uma segunda aplicação
+
+A VPS já fica pronta pra isso: o Caddy de `deploy/edge/` é o único dono das portas 80/443, e o compose do
+honda-rag não publica porta nenhuma (entra na rede externa `edge` só pelo serviço `app`). Pra subir outra
+aplicação (Docker) na mesma máquina, sem tocar em nada do honda-rag:
+
+1. **Clone/copie a app 2** num diretório próprio na VPS (ex.: `/opt/app2`), com seu `docker-compose.yml`.
+2. No compose dela, **não publique porta** e entre na rede externa `edge`:
+   ```yaml
+   services:
+     app2:
+       container_name: app2          # nome fixo: é por ele que o Caddy acha o serviço
+       # ... build/image, env, volumes, etc. — sem "ports:"
+       networks:
+         - default    # se ela tiver banco/outros serviços próprios na rede interna dela
+         - edge
+
+   networks:
+     edge:
+       external: true
+   ```
+3. Adicione o domínio em `deploy/edge/.env.edge` (`APP2_DOMAIN=app2.seudominio.com`, por exemplo) e crie
+   `deploy/edge/sites/app2.caddy`:
+   ```
+   {$APP2_DOMAIN} {
+       reverse_proxy app2:PORTA_INTERNA
+   }
+   ```
+4. Recarregue o Caddy compartilhado (sem downtime pro honda-rag):
+   ```bash
+   cd /opt/honda-rag/deploy/edge
+   docker compose --env-file .env.edge exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+   ```
+5. DNS: crie o registro A de `app2.seudominio.com` apontando pro mesmo IP da VPS antes do passo 4 (o
+   Caddy só emite o certificado quando o domínio já resolve).
+
+Se a app 2 não for Docker (processo direto na VPS), o passo 3 muda só o `reverse_proxy` pra
+`reverse_proxy localhost:PORTA` — o resto (rede `edge`, domínio, reload) é o mesmo.
+
 ## Segurança (resumo)
 
-- Só as portas 22/80/443 ficam abertas; Postgres e Ollama não são publicados.
+- Só as portas 22/80/443 ficam abertas na VPS; é o Caddy compartilhado (`deploy/edge/`) quem as publica,
+  e só ele. Postgres e Ollama não são publicados.
 - Sem login: o site é público (HTTPS pelo Caddy). Cada pergunta consome a API do chat, então mantenha o
   limite de gasto/alerta de cobrança da conta da API (passo 0).
 - A chave SSH do CI só serve para entrar na VPS; se vazar, remova a linha dela do `~/.ssh/authorized_keys`.
-- `.env.prod` fica só no servidor (`chmod 600`) e está no `.gitignore`.
+- `.env.prod` e `deploy/edge/.env.edge` ficam só no servidor (`chmod 600`) e estão no `.gitignore`.

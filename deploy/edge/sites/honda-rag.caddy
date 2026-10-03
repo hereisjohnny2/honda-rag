@@ -1,0 +1,15 @@
+# honda-rag: o serviço `app` do docker-compose.prod.yml entra na rede `edge` com
+# container_name honda-rag-app, por isso o reverse_proxy abaixo resolve pelo nome.
+{$HONDA_RAG_DOMAIN} {
+	encode gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+
+	# o Streamlit usa WebSocket (/_stcore/stream); o reverse_proxy do Caddy já o repassa
+	reverse_proxy honda-rag-app:8501
+}

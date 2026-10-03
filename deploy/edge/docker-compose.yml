@@ -1,0 +1,39 @@
+# Proxy compartilhado da VPS: HTTPS (Let's Encrypt) na frente de todas as aplicações da máquina.
+# Não pertence a nenhuma app — é o único que publica 80/443. Cada app entra na rede externa `edge`
+# (sem publicar porta própria) e ganha um arquivo em sites/<app>.caddy (deploy/DEPLOY.md explica
+# como adicionar uma aplicação nova).
+#
+# Subida (uma vez por VPS, antes de qualquer app):
+#   docker network create edge
+#   cd deploy/edge && cp .env.edge.example .env.edge && nano .env.edge
+#   docker compose --env-file .env.edge up -d
+#
+# Depois de adicionar/mudar um arquivo em sites/*.caddy:
+#   cd deploy/edge && docker compose --env-file .env.edge exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+
+name: edge
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file: .env.edge
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
+      - caddy_data:/data                                     # certificados Let's Encrypt
+      - caddy_config:/config
+    networks:
+      - edge
+    mem_limit: 128m
+
+networks:
+  edge:
+    external: true     # criada uma vez com `docker network create edge`; cada app entra nela
+
+volumes:
+  caddy_data:
+  caddy_config:

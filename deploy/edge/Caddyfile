@@ -1,0 +1,3 @@
+# Um bloco de site por app, cada um no seu arquivo em sites/ (nunca edite este arquivo para
+# adicionar uma app: crie sites/<app>.caddy e recarregue, ver deploy/DEPLOY.md).
+import /etc/caddy/sites/*.caddy

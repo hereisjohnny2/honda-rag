@@ -1,36 +1,22 @@
-# Produção (VPS sem GPU): Caddy (HTTPS) -> app (Streamlit) -> Postgres/pgvector + Ollama (só bge-m3).
+# Produção (VPS sem GPU): app (Streamlit) -> Postgres/pgvector + Ollama (só bge-m3).
 # Uso, na pasta do projeto no servidor (passo a passo em deploy/DEPLOY.md):
 #   docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
 # Depois do primeiro deploy, as atualizações vêm do GitHub Actions (.github/workflows/deploy.yml).
 #
-# Só o Caddy publica portas (80/443). Postgres e Ollama ficam na rede interna do compose.
+# Este compose não publica nenhuma porta: o HTTPS é do proxy compartilhado da VPS (deploy/edge/),
+# que entra na rede externa `edge` (ela precisa existir antes: `docker network create edge`,
+# ver deploy/edge/docker-compose.yml). Postgres e Ollama ficam só na rede interna deste compose.
 # Limites de memória pensados para 4 GB de RAM (KVM 1): somam ~3,4 GB; crie 2 GB de swap por segurança.
 
 name: honda-rag
 
 services:
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      DOMAIN: ${DOMAIN:?defina DOMAIN no .env.prod}
-    volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data                                     # certificados Let's Encrypt
-      - caddy_config:/config
-    depends_on:
-      app:
-        condition: service_healthy
-    mem_limit: 128m
-
   app:
     # Normalmente a imagem vem pronta do CI (GHCR); deploy/deploy.sh a baixa e marca como :current.
     # Sem ela, `up` constrói a partir do Dockerfile (e `up --build` sempre reconstrói com esse nome).
     image: honda-rag-app:current
     build: .
+    container_name: honda-rag-app    # nome fixo: é por ele que o Caddy do proxy compartilhado acha o app
     restart: unless-stopped
     env_file: .env.prod
     environment:
@@ -40,6 +26,9 @@ services:
       USE_SYSTEM_CERTS: "0"                # no servidor não há proxy corporativo: usa o certifi
     volumes:
       - ./data:/app/data:ro                # view.webp das páginas e recortes de figuras
+    networks:
+      - default
+      - edge
     depends_on:
       db:
         condition: service_healthy
@@ -99,8 +88,10 @@ services:
       ollama:
         condition: service_healthy
 
+networks:
+  edge:
+    external: true     # proxy compartilhado da VPS (deploy/edge/); criada com `docker network create edge`
+
 volumes:
   pgdata:
   ollama:
-  caddy_data:
-  caddy_config:
