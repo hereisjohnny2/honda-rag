@@ -28,6 +28,9 @@ services:
       - caddy_config:/config
     networks:
       - edge
+    dns:                                                       # alguns hosts põem 127.0.0.53 (systemd-resolved)
+      - 1.1.1.1                                                 # no resolv.conf do contêiner; isso não é
+      - 8.8.8.8                                                 # alcançável de dentro dele e quebra o ACME/HTTP
     mem_limit: 128m
 
 networks:
