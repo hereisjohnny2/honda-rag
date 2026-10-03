@@ -1,0 +1,17 @@
+# project-mestrado (rockseg): o serviço `frontend` do compose dele entra na rede `edge` com
+# container_name rockseg-frontend; o nginx do próprio frontend já faz proxy de /api para o backend.
+{$ROCKSEG_DOMAIN} {
+	encode gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	# o limite de corpo (upload de lotes de imagem) já é tratado no nginx do frontend
+	# (client_max_body_size); flush_interval -1 evita que o Caddy segure o SSE de progresso
+	reverse_proxy rockseg-frontend:5173 {
+		flush_interval -1
+	}
+}
