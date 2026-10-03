@@ -126,7 +126,8 @@ cd deploy/edge && docker compose --env-file .env.edge logs -f caddy   # logs do 
 | Atualizar o código | automático a cada push na `main` (seção 13); à mão: `./deploy/deploy.sh <sha>` |
 | Voltar uma versão | *Actions > Deploy > Run workflow* com o SHA anterior, ou `./deploy/deploy.sh <sha>` |
 | Novos dados (nova ingestão) | repita os passos 6 e 7 |
-| Mudou domínio ou adicionou uma app (`sites/*.caddy`) | `cd deploy/edge && docker compose --env-file .env.edge exec -T caddy caddy reload --config /etc/caddy/Caddyfile` |
+| Só mudou o conteúdo de um `sites/*.caddy` já existente | `cd deploy/edge && docker compose --env-file .env.edge exec -T caddy caddy reload --config /etc/caddy/Caddyfile` |
+| Adicionou uma app nova (variável de domínio nova no `.env.edge`) | `cd deploy/edge && docker compose --env-file .env.edge up -d --force-recreate` (o `.env.edge` só é lido na criação do contêiner — `reload` sozinho não pega variável nova) |
 | Backup do banco (cron 03:00) | `0 3 * * * /opt/honda-rag/deploy/backup.sh >> /opt/honda-rag/backups/backup.log 2>&1` |
 
 ## 13. Deploy automático (GitHub Actions)
@@ -208,16 +209,20 @@ aplicação (Docker) na mesma máquina, sem tocar em nada do honda-rag:
        reverse_proxy app2:PORTA_INTERNA
    }
    ```
-4. Recarregue o Caddy compartilhado (sem downtime pro honda-rag):
+4. Aplique a variável nova recriando o contêiner do Caddy (sem downtime pro honda-rag — só o serviço
+   `caddy` é afetado; `reload` sozinho **não** basta aqui, porque `APP2_DOMAIN` é uma variável de ambiente
+   nova e essas só são lidas quando o contêiner é criado, não quando o Caddyfile é recarregado):
    ```bash
    cd /opt/honda-rag/deploy/edge
-   docker compose --env-file .env.edge exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+   docker compose --env-file .env.edge up -d --force-recreate
    ```
+   (depois disso, uma mudança só no *conteúdo* de `sites/app2.caddy` — sem variável nova — aí sim basta
+   `docker compose --env-file .env.edge exec -T caddy caddy reload --config /etc/caddy/Caddyfile`.)
 5. DNS: crie o registro A de `app2.seudominio.com` apontando pro mesmo IP da VPS antes do passo 4 (o
    Caddy só emite o certificado quando o domínio já resolve).
 
 Se a app 2 não for Docker (processo direto na VPS), o passo 3 muda só o `reverse_proxy` pra
-`reverse_proxy localhost:PORTA` — o resto (rede `edge`, domínio, reload) é o mesmo.
+`reverse_proxy localhost:PORTA` — o resto (rede `edge`, domínio, recriar o Caddy) é o mesmo.
 
 ## Segurança (resumo)
 
